@@ -406,6 +406,7 @@ export function OnboardingForm({
               <Button variant="outline" onClick={() => setStep(2)}>Back</Button>
               <Button onClick={() => setStep(4)} disabled={!canProceedStep3}>Next</Button>
             </div>
+            </div>
           </CardContent>
         </Card>
       )}

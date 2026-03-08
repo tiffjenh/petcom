@@ -462,14 +462,12 @@ export const onboardingSequenceCron = inngest.createFunction(
     const day3Users = await prisma.user.findMany({
       where: {
         completedOnboardingAt: { gte: threeDaysAgoStart, lt: threeDaysAgoEnd },
-        email: { not: null },
       },
       select: { email: true },
     });
     const day7Users = await prisma.user.findMany({
       where: {
         completedOnboardingAt: { gte: sevenDaysAgoStart, lt: sevenDaysAgoEnd },
-        email: { not: null },
       },
       select: { email: true },
     });

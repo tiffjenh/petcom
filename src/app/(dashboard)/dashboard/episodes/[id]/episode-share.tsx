@@ -25,6 +25,12 @@ type Props = {
   showWatermarkToggle?: boolean;
 };
 
+/** Return type for downloadVerticalMp4 to avoid TSX generic/JSX parse ambiguity */
+type DownloadResult = Promise<boolean>;
+
+/** Share confirmation state to avoid TSX generic/JSX parse ambiguity */
+type ShareConfirmationState = "tiktok" | "reels" | null;
+
 export function EpisodeShare({
   episodeId,
   title,
@@ -37,7 +43,7 @@ export function EpisodeShare({
   const { toast } = useToast();
   const [downloading, setDownloading] = useState(false);
   const [preferNoWatermark, setPreferNoWatermark] = useState(true);
-  const [shareConfirmation, setShareConfirmation] = useState<"tiktok" | "reels" | null>(null);
+  const [shareConfirmation, setShareConfirmation] = useState<ShareConfirmationState>(null);
 
   useEffect(() => {
     if (!shareConfirmation) return;
@@ -61,7 +67,7 @@ export function EpisodeShare({
     }
   };
 
-  const downloadVerticalMp4 = async (): Promise<boolean> => {
+  const downloadVerticalMp4 = async (): DownloadResult => {
     if (!videoUrl || !canShare) return false;
     const res = await fetch(videoUrl);
     const blob = await res.blob();
@@ -173,6 +179,7 @@ export function EpisodeShare({
               "flex items-center gap-2 rounded-lg border border-green-500/30 bg-green-500/10 px-3 py-2 text-sm font-medium text-green-700 dark:text-green-400",
               "animate-in slide-in-from-top-2 fade-in duration-300"
             )}
+          >
             <Check className="h-5 w-5 shrink-0" />
             {shareConfirmation === "tiktok"
               ? "Caption copied & TikTok upload opened — paste and post!"

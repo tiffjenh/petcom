@@ -27,7 +27,21 @@ export default async function DashboardLayout({
   if (!userId) redirect("/sign-in");
 
   const dbUser = await getOrCreateDbUser();
-  if (!dbUser) redirect("/sign-in");
+  if (!dbUser) {
+    return (
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center p-6 text-center">
+        <h1 className="text-xl font-semibold text-foreground">Database not connected</h1>
+        <p className="mt-2 max-w-md text-muted-foreground">
+          Add a valid <code className="rounded bg-muted px-1.5 py-0.5 text-sm">DATABASE_URL</code> to{" "}
+          <code className="rounded bg-muted px-1.5 py-0.5 text-sm">.env.local</code> and restart the dev server. Use Supabase or any PostgreSQL provider.
+        </p>
+        <p className="mt-4 text-sm text-muted-foreground">
+          See <strong>docs/CONNECTING_SERVICES.md</strong> for step-by-step setup (Supabase, Clerk, Vercel).
+        </p>
+        <a href="/" className="mt-6 text-sm text-primary underline">Back to home</a>
+      </div>
+    );
+  }
   await getOrCreateSubscription(dbUser.id);
 
   const dbUserWithHousehold = await prisma.user.findUnique({

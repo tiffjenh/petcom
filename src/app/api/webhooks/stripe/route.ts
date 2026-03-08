@@ -82,7 +82,7 @@ export async function POST(req: Request) {
       });
       if (existing) {
         const priceId = getSubscriptionPriceId(subscription);
-        const plan: PlanFromPrice = planFromPriceId(priceId) ?? existing.plan;
+        const plan: PlanFromPrice = (planFromPriceId(priceId) ?? existing.plan) as PlanFromPrice;
         await prisma.subscription.update({
           where: { id: existing.id },
           data: {

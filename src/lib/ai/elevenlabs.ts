@@ -18,7 +18,7 @@ function getClient(): ElevenLabsClient {
 const NARRATOR_VOICE_ID =
   process.env.ELEVENLABS_VOICE_ID_NARRATOR || "EXAVITQu4vr4xnSDxMaL";
 /** Slightly echo-y, amused tone for dog thought bubbles (internal narrator). */
-const THOUGHT_BUBBLE_VOICE_ID =
+export const THOUGHT_BUBBLE_VOICE_ID =
   process.env.ELEVENLABS_VOICE_ID_THOUGHT || "pNInz6obpgDQGcFmaJgB";
 
 export async function generateSpeechToBuffer(text: string): Promise<Buffer> {
