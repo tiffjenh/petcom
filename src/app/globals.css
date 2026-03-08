@@ -1,0 +1,72 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Design language: warm cream, amber, navy, coral — Pixar meets cozy streaming */
+@layer base {
+  :root {
+    /* Warm cream #FFF8F0 */
+    --background: 40 100% 97%;
+    --foreground: 222 45% 18%;
+    --card: 40 100% 99%;
+    --card-foreground: 222 45% 18%;
+    /* Rich amber #F4A335 */
+    --primary: 36 89% 58%;
+    --primary-foreground: 222 45% 12%;
+    /* Soft cream / warm gray */
+    --secondary: 40 30% 94%;
+    --secondary-foreground: 222 45% 25%;
+    --muted: 40 25% 93%;
+    --muted-foreground: 222 25% 45%;
+    /* Soft coral #FF6B6B for accent */
+    --accent: 0 100% 71%;
+    --accent-foreground: 222 45% 12%;
+    --destructive: 0 100% 65%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 40 20% 90%;
+    --input: 40 20% 90%;
+    --ring: 36 89% 58%;
+    --radius: 0.875rem;
+    --popover: 40 100% 99%;
+    --popover-foreground: 222 45% 18%;
+  }
+
+  .dark {
+    /* Deep navy #1A2744 as dark base */
+    --background: 222 45% 10%;
+    --foreground: 40 30% 96%;
+    --card: 222 40% 14%;
+    --card-foreground: 40 30% 96%;
+    --primary: 36 89% 58%;
+    --primary-foreground: 222 45% 12%;
+    --secondary: 222 35% 20%;
+    --secondary-foreground: 40 30% 90%;
+    --muted: 222 35% 20%;
+    --muted-foreground: 40 15% 60%;
+    --accent: 0 100% 71%;
+    --accent-foreground: 222 45% 10%;
+    --destructive: 0 70% 55%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 222 30% 22%;
+    --input: 222 30% 22%;
+    --ring: 36 89% 55%;
+    --popover: 222 40% 13%;
+    --popover-foreground: 40 30% 96%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground font-body;
+  }
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-heading;
+  }
+}
+
+/* Popover for select/dropdown */
+.bg-popover { background-color: hsl(var(--popover)); }
+.text-popover-foreground { color: hsl(var(--popover-foreground)); }

@@ -1,0 +1,107 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                    String            @id @default(cuid())
+  clerkId               String            @unique
+  email                 String            @unique
+  name                  String?
+  createdAt             DateTime          @default(now())
+  completedOnboardingAt DateTime?         // for onboarding email sequence
+  notificationEmail     Boolean           @default(true)
+  notificationPush      Boolean           @default(false)
+  notificationTime      String?           // e.g. "09:00" for preferred daily time
+  subscription          Subscription?
+  household             Household?
+  pushSubscriptions     PushSubscription[]
+}
+
+model PushSubscription {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  createdAt DateTime @default(now())
+}
+
+model Household {
+  id          String       @id @default(cuid())
+  showTitle   String       // e.g. "Life with Biscuit"
+  showStyle   String[]     // e.g. ["The Office", "Parks and Rec"]
+  comedyNotes String?      // user free-text about their vibe
+  ownerName   String?      // your name (the co-star) for script context
+  userId      String       @unique
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  dogs        Dog[]
+  castMembers CastMember[]
+  episodes    Episode[]
+  createdAt   DateTime     @default(now())
+}
+
+model Dog {
+  id                   String    @id @default(cuid())
+  name                 String
+  breed                String?
+  personality          String[]  // e.g. ["chaotic", "foodie", "dramatic"]
+  characterBio         String?   // free-text quirks & behavior for script
+  photoUrl             String
+  animatedAvatar       String?   // generated Pixar-style avatar URL
+  avatarRegenCount     Int       @default(0) // total regenerations (free: 3 max)
+  avatarRegenMonth     String?   // "YYYY-MM" for Pro monthly count
+  avatarRegenCountInMonth Int    @default(0) // Pro: regenerations this month
+  voiceId              String?   // ElevenLabs voice ID (assigned after first generation)
+  householdId          String
+  household            Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  createdAt            DateTime  @default(now())
+}
+
+model CastMember {
+  id                   String    @id @default(cuid())
+  name                 String
+  role                 String    // e.g. "Owner", "Roommate", "Kid", "Partner"
+  photoUrl             String
+  animatedAvatar       String?
+  avatarRegenCount     Int       @default(0)
+  avatarRegenMonth     String?
+  avatarRegenCountInMonth Int    @default(0)
+  voiceId              String?   // ElevenLabs voice ID (assigned after first generation)
+  householdId          String
+  household            Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  createdAt            DateTime  @default(now())
+}
+
+model Episode {
+  id                String    @id @default(cuid())
+  title             String
+  episodeNum        Int
+  season            Int       @default(1)
+  synopsis          String
+  script            Json      // full structured script
+  videoUrl          String?   // primary (vertical 1080x1920 for Reels)
+  videoUrlLandscape String?   // landscape 1920x1080
+  thumbnailUrl      String?
+  status            String    @default("generating") // generating | ready | failed
+  householdId       String
+  household         Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  createdAt         DateTime  @default(now())
+  publishedAt       DateTime?
+}
+
+model Subscription {
+  id         String   @id @default(cuid())
+  userId     String   @unique
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plan       String   // "free" | "pro" | "family"
+  stripeId   String?
+  status     String   // "active" | "canceled" | "past_due"
+  renewsAt   DateTime?
+  createdAt  DateTime @default(now())
+}
