@@ -37,7 +37,7 @@ export function LandingAuthCta() {
       </SignedOut>
       <SignedIn>
         <Button asChild size="lg" className="text-base">
-          <Link href="/dashboard">Go to Dashboard</Link>
+          <Link href="/demo">Try Demo — Free</Link>
         </Button>
       </SignedIn>
     </>

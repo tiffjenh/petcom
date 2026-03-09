@@ -54,6 +54,7 @@ model Dog {
   characterBio         String?   // free-text quirks & behavior for script
   photoUrl             String
   animatedAvatar       String?   // generated Pixar-style avatar URL
+  loraId               String?   // Astria tune_id for LoRA (trained from dog photos)
   avatarRegenCount     Int       @default(0) // total regenerations (free: 3 max)
   avatarRegenMonth     String?   // "YYYY-MM" for Pro monthly count
   avatarRegenCountInMonth Int    @default(0) // Pro: regenerations this month
@@ -91,8 +92,20 @@ model Episode {
   status            String    @default("generating") // generating | ready | failed
   householdId       String
   household         Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  situation         EpisodeSituation?
   createdAt         DateTime  @default(now())
   publishedAt       DateTime?
+}
+
+model EpisodeSituation {
+  id         String   @id @default(cuid())
+  episodeId  String   @unique
+  episode    Episode  @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  category   String   // "home" | "outdoor" | "social" | "seasonal" | "emotional"
+  situation  String   // e.g. "vet_visit", "squirrel_chase"
+  setting    String   // e.g. "living room", "dog park"
+  plotDevice String   // e.g. "dog steals thanksgiving turkey"
+  tags       String[] // searchable tags
 }
 
 model Subscription {
@@ -104,4 +117,32 @@ model Subscription {
   status     String   // "active" | "canceled" | "past_due"
   renewsAt   DateTime?
   createdAt  DateTime @default(now())
+}
+
+model PreviewGeneration {
+  id                 String    @id @default(cuid())
+  jobId              String    @unique // for polling
+  ip                 String?   // rate limit tracking
+  dogName            String
+  photoUrls          String[]  // up to 3
+  userVideoUrl       String?   // optional uploaded video
+  avatarUrl          String?   // Replicate Pixar-style output
+  comedyStyle        String?   // e.g. "The Office"
+  trailerUrl         String?   // final 30s trailer
+  status             String   @default("pending") // pending | processing | completed | failed
+  errorMessage       String?
+  convertedToAccount Boolean   @default(false)
+  styleImages        Json?     // { liveAction, cinematicCG, anime, watercolor, comicBook, storybook, pixelArt } from generate-styles
+  createdAt          DateTime  @default(now())
+  completedAt        DateTime?
+}
+
+// Cache for style animation clips (fal Kling) so we don't re-generate on same style card
+model PreviewStyleClipCache {
+  id              String   @id @default(cuid())
+  styleImageUrl   String   // normalized URL
+  artStyle        String   // e.g. "Watercolor"
+  clips           Json     // { rotation, running, barking, wagging, jumping, headTilt } URLs
+  createdAt       DateTime @default(now())
+  @@unique([styleImageUrl, artStyle])
 }

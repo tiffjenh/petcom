@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { getComedyStyleBlock } from "@/lib/prompts/scriptPrompt";
 
 function getClient() {
   const key = process.env.ANTHROPIC_API_KEY;
@@ -65,6 +66,7 @@ export async function generateScript(params: {
     .join("\n");
   const selectedShowsStr =
     selectedShows.length > 0 ? selectedShows.join(", ") : "The Office, Brooklyn Nine-Nine";
+  const comedyStyleBlock = getComedyStyleBlock(selectedShows);
   const vibeNotes = comedyNotes?.trim() ? comedyNotes : "None";
   const coStarLine = ownerName?.trim() ? `Primary co-star (owner): ${ownerName.trim()}` : "";
 
@@ -72,6 +74,7 @@ export async function generateScript(params: {
 
 The show is called: ${showTitle}
 Comedy style inspired by: ${selectedShowsStr}
+${comedyStyleBlock ? `\n${comedyStyleBlock}\n` : ""}
 Additional vibe notes: ${vibeNotes}
 ${coStarLine ? `\n${coStarLine}\n` : ""}
 
@@ -88,7 +91,7 @@ RULES:
 3. Human characters speak normally in dialogue.
 4. Episodes should have a clear 3-act structure: Setup (1 min) → Escalation (3 min) → Resolution/Punchline (1 min).
 5. Draw from slice-of-life situations: morning routines, walks, treats, visitors, vet visits, squirrels, the mailman, Zoom calls, etc.
-6. Include at least one "talking head" confessional scene per episode if the style includes The Office or Parks & Rec.
+6. ${comedyStyleBlock ? "Follow the COMEDY STYLE INSTRUCTIONS above. " : ""}Include at least one "talking head" confessional scene per episode if the style includes The Office or Parks & Rec.
 7. Write distinct scene descriptions that can be animated (describe setting, character positions, actions).
 8. The final line of every episode should be a closing punchline or ironic button.
 

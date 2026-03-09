@@ -10,19 +10,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { Loader2, AlertTriangle } from "lucide-react";
 import type { Household } from "@prisma/client";
 import { PushSubscribeButton } from "@/components/push-subscribe-button";
-
-const COMEDY_SHOWS = [
-  "Modern Family",
-  "Friends",
-  "Parks and Recreation",
-  "Brooklyn Nine-Nine",
-  "The Office",
-  "Schitt's Creek",
-  "What We Do in the Shadows",
-  "Abbott Elementary",
-  "It's Always Sunny",
-  "New Girl",
-];
+import { COMEDY_SHOW_OPTIONS } from "@/components/onboarding/StepComedyStyle";
 
 const NOTIFICATION_TIMES = [
   { value: "", label: "When episode is ready" },
@@ -110,17 +98,18 @@ export function SettingsForm({
           <CardDescription>Pick {maxComedyPicks === 1 ? "1 show" : `1–${maxComedyPicks} shows`}. We match this vibe when writing episodes.</CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-5">
-            {COMEDY_SHOWS.map((s) => (
+          <div className="grid grid-cols-2 gap-2 md:grid-cols-3 lg:grid-cols-5">
+            {COMEDY_SHOW_OPTIONS.map((show) => (
               <button
-                key={s}
+                key={show.name}
                 type="button"
-                onClick={() => toggleShowStyle(s)}
+                onClick={() => toggleShowStyle(show.name)}
                 className={`rounded-lg border-2 px-3 py-2 text-left text-sm font-medium transition-colors ${
-                  showStyle.includes(s) ? "border-primary bg-primary/10" : "border-border hover:bg-muted"
+                  showStyle.includes(show.name) ? "border-primary bg-primary/10" : "border-border hover:bg-muted"
                 }`}
               >
-                {s}
+                <span className="mr-1">{show.emoji}</span>
+                {show.name}
               </button>
             ))}
           </div>

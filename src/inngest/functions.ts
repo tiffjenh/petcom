@@ -1,6 +1,13 @@
 import { inngest } from "./client";
 import { prisma } from "@/lib/prisma";
+import { runPreviewPipeline } from "@/lib/preview-pipeline";
+import * as astria from "@/lib/astria";
 import { generateScript } from "@/lib/ai/script";
+import {
+  generateEpisodeScript,
+  saveEpisodeSituation,
+  type DirectorScriptJson,
+} from "@/lib/episodeDirector";
 import { generateSceneClips } from "@/lib/ai/replicate";
 import { generateDogAvatar, generateHumanAvatar } from "@/lib/ai/avatar";
 import {
@@ -171,24 +178,9 @@ export const generateEpisodeFunction = inngest.createFunction(
     });
 
     const { script, characterVoiceMap } = await step.run("generate-script", async () => {
-      const scriptResult = await generateScript({
-        showTitle: householdPayload.showTitle,
-        selectedShows: householdPayload.showStyle,
-        comedyNotes: householdPayload.comedyNotes,
-        ownerName: householdPayload.ownerName,
-        dogs: householdPayload.dogs.map((d) => ({
-          name: d.name,
-          breed: d.breed,
-          personality: d.personality,
-          characterBio: d.characterBio,
-        })),
-        castMembers: householdPayload.castMembers.map((c) => ({
-          name: c.name,
-          role: c.role,
-        })),
-        episodeNumber: householdPayload.episodeNum,
-        season: householdPayload.season,
-      });
+      const scriptResult = (await generateEpisodeScript(
+        householdPayload.householdId
+      )) as DirectorScriptJson;
       await prisma.episode.update({
         where: { id: householdPayload.episodeId },
         data: {
@@ -197,6 +189,7 @@ export const generateEpisodeFunction = inngest.createFunction(
           script: JSON.parse(JSON.stringify(scriptResult)),
         },
       });
+      await saveEpisodeSituation(householdPayload.episodeId, scriptResult);
       const map = buildCharacterVoiceMap(
         householdPayload.dogs,
         householdPayload.castMembers,
@@ -480,5 +473,52 @@ export const onboardingSequenceCron = inngest.createFunction(
     }
 
     return { day3: day3Users.length, day7: day7Users.length };
+  }
+);
+
+export const previewGenerateFunction = inngest.createFunction(
+  {
+    id: "preview-generate",
+    retries: 1,
+    concurrency: { limit: 3 },
+  },
+  { event: "preview/generate" },
+  async ({ event, step }) => {
+    const { jobId } = event.data;
+    await step.run("run-preview-pipeline", async () => {
+      await runPreviewPipeline(jobId);
+      return { ok: true };
+    });
+    return { jobId };
+  }
+);
+
+export const dogLoraTrainFunction = inngest.createFunction(
+  {
+    id: "dog-lora-train",
+    retries: 1,
+  },
+  { event: "dog/lora-train" },
+  async ({ event, step }) => {
+    const { dogId, dogName, photoUrls } = event.data as {
+      dogId: string;
+      dogName: string;
+      photoUrls: string[];
+    };
+    if (!process.env.ASTRIA_API_KEY) {
+      console.error("[Astria] ASTRIA_API_KEY not set, skipping LoRA training");
+      return { skipped: true };
+    }
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "") || "http://localhost:2000";
+    const callbackUrl = `${baseUrl}/api/webhooks/astria?dogId=${encodeURIComponent(dogId)}`;
+    const tuneId = await step.run("train-lora", async () => {
+      try {
+        return await astria.trainDogLora(dogName, photoUrls, callbackUrl);
+      } catch (e) {
+        console.error("[Astria] LoRA training failed:", e);
+        throw e;
+      }
+    });
+    return { dogId, tuneId };
   }
 );

@@ -75,7 +75,10 @@ If you use the direct session URL (port 5432), you can omit `?pgbouncer=true`.
 ```bash
 npx prisma migrate deploy
 # or for dev: npx prisma migrate dev
+# or to push schema without migrations: npx prisma db push
 ```
+
+**If you get P1000 (Authentication failed):** The database password in your connection string doesn’t match Supabase. In **Project Settings → Database**, use **Reset database password**, set a new password (avoid `@`, `#`, `&` so you don’t need URL encoding), then update `DATABASE_URL` in `.env` and `.env.local` with that password.
 
 **Vercel:** Add `DATABASE_URL` with the same Supabase connection string (use the pooler URL for serverless).
 
@@ -134,5 +137,41 @@ NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET="pawcast-media"
 | **Clerk**  | App created; publishable + secret keys in env; add Vercel domain in Clerk. |
 | **Supabase** | Project created; `DATABASE_URL` (PostgreSQL), API URL + anon + service_role keys; storage bucket `pawcast-media`. |
 | **Vercel** | Project imported from GitHub; all env vars set; deploy. |
+| **Upstash Redis** | Optional: for demo trailer rate limit (2 per 24h per IP). Create a Redis database at [upstash.com](https://upstash.com), then set `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` in env. Without these, the limit is not enforced. |
 
 For local-only setup (Clerk + optional DB), see [SETUP.md](./SETUP.md). For full env vars list see [.env.example](../.env.example) in the project root.
+
+---
+
+## Demo: “Upload failed” or thumbnails not showing?
+
+- **“Upload failed” when you click Generate All Styles**  
+  The demo uploads the selected photo to **Supabase Storage**. If Supabase isn’t set up, the request fails with “Upload failed.” Add Supabase (see [§3 Supabase](#3-supabase--database-and-storage)) and create a **public** storage bucket named `pawcast-media` (or set `NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET`). Thumbnails for the photos you select are generated in the browser and don’t need Supabase; they should appear as soon as you pick a file.
+
+**How to check Supabase Storage and create the bucket:** Open [Supabase Dashboard](https://supabase.com/dashboard) → your project → **Storage** in the left sidebar. If there is no bucket named `pawcast-media`, click **New bucket**, name it `pawcast-media`, turn **Public bucket** ON, and create it. If the bucket exists, open it and ensure **Public** is enabled. Restart your dev server and try again.
+
+---
+
+## Demo trailer not generating?
+
+If you upload photos and click **Generate My Trailer** (or **Generate All Styles**) and the upload succeeds but nothing finishes:
+
+1. **Background worker (Inngest)**  
+   The trailer is built by an Inngest function. Locally, start the Inngest dev server so the job runs:
+   ```bash
+   npx inngest-cli@latest dev
+   ```
+   Keep it running in a separate terminal while you use the app. In production, use the Inngest Cloud dashboard and set `INNGEST_EVENT_KEY` (and `INNGEST_SIGNING_KEY`).
+
+2. **Database**  
+   The demo stores jobs in the `PreviewGeneration` table. If you haven’t run migrations (or `npx prisma db push`), the create will fail. Run:
+   ```bash
+   npx prisma db push
+   ```
+   (or `npx prisma migrate deploy` if you use migrations.)
+
+3. **Failed job**  
+   If the job runs but the pipeline fails (e.g. missing API keys or FFmpeg), the status is set to **failed** and the UI shows the error after polling. Check your env for Replicate, Anthropic (Claude), ElevenLabs, and Supabase; the pipeline needs all of these.
+
+4. **Taking too long**  
+   After about 2 minutes on the loading screen, the app shows a hint and a **Back to upload** button. Use that if the worker isn’t running or the job is stuck.

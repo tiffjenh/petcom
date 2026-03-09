@@ -61,9 +61,10 @@ export async function POST(req: Request) {
     await prisma.dog.deleteMany({ where: { householdId: household.id } });
     await prisma.castMember.deleteMany({ where: { householdId: household.id } });
 
+    const createdDogs: { id: string; name: string; photoUrl: string }[] = [];
     if (validDogs.length) {
       for (const d of validDogs) {
-        await prisma.dog.create({
+        const dog = await prisma.dog.create({
           data: {
             householdId: household.id,
             name: d.name,
@@ -73,6 +74,7 @@ export async function POST(req: Request) {
             photoUrl: d.photoUrl,
           },
         });
+        createdDogs.push({ id: dog.id, name: dog.name, photoUrl: dog.photoUrl });
       }
     }
 
@@ -93,6 +95,16 @@ export async function POST(req: Request) {
       await inngest.send({
         name: "avatar/generate",
         data: { householdId: household.id },
+      });
+    }
+    for (const dog of createdDogs) {
+      await inngest.send({
+        name: "dog/lora-train",
+        data: {
+          dogId: dog.id,
+          dogName: dog.name,
+          photoUrls: [dog.photoUrl],
+        },
       });
     }
 

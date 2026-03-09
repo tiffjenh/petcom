@@ -69,11 +69,16 @@ const config: Config = {
           "0%": { transform: "translateY(-100%) rotate(0deg)", opacity: "1" },
           "100%": { transform: "translateY(100vh) rotate(720deg)", opacity: "0" },
         },
+        "shimmer": {
+          "0%": { transform: "translateX(-100%)" },
+          "100%": { transform: "translateX(100%)" },
+        },
       },
       animation: {
         "spring-in": "spring-in 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)",
         "spring-out": "spring-out 0.25s ease-out",
         "confetti": "confetti 3s ease-out forwards",
+        "shimmer": "shimmer 1.5s ease-in-out infinite",
       },
     },
   },

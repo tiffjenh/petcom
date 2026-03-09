@@ -5,6 +5,8 @@ import {
   generateAvatarsFunction,
   dailyEpisodeCron,
   onboardingSequenceCron,
+  previewGenerateFunction,
+  dogLoraTrainFunction,
 } from "@/inngest/functions";
 
 export const { GET, POST, PUT } = serve({
@@ -14,5 +16,7 @@ export const { GET, POST, PUT } = serve({
     generateAvatarsFunction,
     dailyEpisodeCron,
     onboardingSequenceCron,
+    previewGenerateFunction,
+    dogLoraTrainFunction,
   ],
 });
