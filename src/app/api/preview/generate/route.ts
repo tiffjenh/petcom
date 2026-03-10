@@ -7,8 +7,6 @@ import { randomUUID } from "crypto";
 
 const PHOTO_ACCEPT = "image/jpeg,image/png,image/heic";
 const PHOTO_MAX_BYTES = 10 * 1024 * 1024; // 10MB
-const VIDEO_ACCEPT = "video/mp4,video/quicktime"; // mp4, mov
-const VIDEO_MAX_BYTES = 50 * 1024 * 1024; // 50MB
 
 function getClientIp(req: Request): string {
   const xff = req.headers.get("x-forwarded-for");
@@ -60,17 +58,6 @@ export async function POST(req: Request) {
       }
     }
 
-    let userVideoUrl: string | null = null;
-    const videoFile = formData.get("dogVideo") as File | null;
-    if (videoFile && videoFile.size > 0) {
-      if (videoFile.size > VIDEO_MAX_BYTES) {
-        return NextResponse.json(
-          { error: "Video must be under 50MB" },
-          { status: 400 }
-        );
-      }
-    }
-
     const bucket = process.env.NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET ?? "pawcast-media";
     const supabase = getSupabaseAdmin();
     const prefix = `previews/${randomUUID()}`;
@@ -93,22 +80,6 @@ export async function POST(req: Request) {
       photoUrls.push(urlData.publicUrl);
     }
 
-    if (videoFile && videoFile.size > 0) {
-      const ext = videoFile.name.split(".").pop() || "mp4";
-      const path = `${prefix}/video.${ext}`;
-      const buffer = Buffer.from(await videoFile.arrayBuffer());
-      const { data, error } = await supabase.storage.from(bucket).upload(path, buffer, {
-        contentType: videoFile.type,
-        upsert: false,
-      });
-      if (error) {
-        console.error("Preview video upload error:", error);
-        return NextResponse.json({ error: "Upload failed" }, { status: 500 });
-      }
-      const { data: urlData } = supabase.storage.from(bucket).getPublicUrl(data.path);
-      userVideoUrl = urlData.publicUrl;
-    }
-
     const jobId = randomUUID();
     await prisma.previewGeneration.create({
       data: {
@@ -116,7 +87,6 @@ export async function POST(req: Request) {
         ip,
         dogName,
         photoUrls,
-        userVideoUrl,
         status: "pending",
       },
     });

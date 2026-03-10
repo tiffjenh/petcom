@@ -1,5 +1,10 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { getComedyStyleBlock } from "@/lib/prompts/scriptPrompt";
+import {
+  SYSTEM_PROMPT,
+  getPrimaryShowFormulaKey,
+  SHOW_FORMULAS,
+} from "@/lib/ai/trailer-script";
 
 function getClient() {
   const key = process.env.ANTHROPIC_API_KEY;
@@ -70,8 +75,46 @@ export async function generateScript(params: {
   const vibeNotes = comedyNotes?.trim() ? comedyNotes : "None";
   const coStarLine = ownerName?.trim() ? `Primary co-star (owner): ${ownerName.trim()}` : "";
 
-  const systemPrompt = `You are a TV writer for a Pixar-style animated sitcom. Your job is to write a ~5-minute episode script.
+  const formulaKey = getPrimaryShowFormulaKey(selectedShows);
+  const showFormula = SHOW_FORMULAS[formulaKey] ?? SHOW_FORMULAS.theOffice;
+  const primaryDogName = dogs[0]?.name ?? "The dog";
 
+  const formulaBlock = `
+You are writing for ${showFormula.name}.
+
+REQUIRED EPISODE STRUCTURE — FOLLOW EXACTLY:
+${showFormula.structureFormula.map((step) => step).join("\n")}
+
+REQUIRED ELEMENTS — ALL MUST APPEAR:
+${showFormula.requiredElements.map((el) => `✓ ${el}`).join("\n")}
+
+FORBIDDEN — NEVER USE:
+${showFormula.forbiddenElements.map((el) => `✗ ${el}`).join("\n")}
+
+TONE GUIDE:
+${showFormula.toneGuide}
+
+EXAMPLE PREMISE FOR REFERENCE:
+${showFormula.exampleEpisodePremise.replace(/{dogName}/g, primaryDogName)}
+`;
+
+  const qualityChecklist = `
+QUALITY CHECKLIST — verify before returning:
+✓ Cold open has clear setup/punchline
+✓ Main conflict ties to dog's personality
+✓ Dog has clear goal they pursue
+✓ Escalation makes things worse before better
+✓ Ends warm or triumphant
+✓ Would make the owner say "that's SO them"
+✓ Appropriate for all ages
+✓ Follows ${showFormula.name} structure exactly
+`;
+
+  const systemPrompt = `${SYSTEM_PROMPT}
+
+═══════════════════════════════
+SHOW & CAST
+═══════════════════════════════
 The show is called: ${showTitle}
 Comedy style inspired by: ${selectedShowsStr}
 ${comedyStyleBlock ? `\n${comedyStyleBlock}\n` : ""}
@@ -84,18 +127,18 @@ ${dogList || "- (No dogs listed)"}
 
 Humans:
 ${castMemberList || "- (No human cast listed)"}
+${formulaBlock}
+${qualityChecklist}
 
-RULES:
+EPISODE RULES:
 1. The dog(s) are the MAIN CHARACTER(S). Every episode revolves around them.
-2. Dogs do NOT speak out loud. Instead, they have an inner monologue shown as thought bubbles. Write these as sardonic, funny, insightful internal commentary.
+2. Dogs do NOT speak out loud. Use inner monologue as thought bubbles (sardonic, funny, insightful).
 3. Human characters speak normally in dialogue.
-4. Episodes should have a clear 3-act structure: Setup (1 min) → Escalation (3 min) → Resolution/Punchline (1 min).
-5. Draw from slice-of-life situations: morning routines, walks, treats, visitors, vet visits, squirrels, the mailman, Zoom calls, etc.
-6. ${comedyStyleBlock ? "Follow the COMEDY STYLE INSTRUCTIONS above. " : ""}Include at least one "talking head" confessional scene per episode if the style includes The Office or Parks & Rec.
-7. Write distinct scene descriptions that can be animated (describe setting, character positions, actions).
-8. The final line of every episode should be a closing punchline or ironic button.
+4. Draw from slice-of-life: morning routines, walks, treats, visitors, vet, squirrels, mailman, Zoom calls, etc.
+5. Write distinct scene descriptions that can be animated (setting, character positions, actions).
+6. The final line of every episode should be a closing punchline or ironic button.
 
-OUTPUT FORMAT: Return ONLY valid JSON, no markdown or code fences. Use this exact structure:
+OUTPUT FORMAT: Return ONLY valid JSON, no markdown or code fences:
 {
   "episodeTitle": "string",
   "synopsis": "string (2 sentences)",
@@ -107,11 +150,7 @@ OUTPUT FORMAT: Return ONLY valid JSON, no markdown or code fences. Use this exac
       "characters": ["string"],
       "action": "string (stage direction)",
       "dialogue": [
-        {
-          "character": "string",
-          "line": "string",
-          "isThoughtBubble": false
-        }
+        { "character": "string", "line": "string", "isThoughtBubble": false }
       ]
     }
   ]

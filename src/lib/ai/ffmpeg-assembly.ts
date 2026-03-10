@@ -1,4 +1,11 @@
+process.env.FFMPEG_PATH = process.env.FFMPEG_PATH || "/opt/homebrew/bin/ffmpeg";
+process.env.FFPROBE_PATH = process.env.FFPROBE_PATH || "/opt/homebrew/bin/ffprobe";
+
 import ffmpeg from "fluent-ffmpeg";
+ffmpeg.setFfmpegPath(process.env.FFMPEG_PATH);
+ffmpeg.setFfprobePath(process.env.FFPROBE_PATH);
+console.log("[ffmpeg-assembly] using ffmpeg at:", process.env.FFMPEG_PATH);
+
 import { createWriteStream } from "fs";
 import { pipeline } from "stream/promises";
 import { Readable } from "stream";

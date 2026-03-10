@@ -1,57 +1,51 @@
 import { fal } from "@fal-ai/client";
-import { ART_STYLES, type ArtStyleKey } from "@/lib/art-styles";
-import { STYLE_PROMPTS } from "@/lib/art-styles";
 
-const VALID_STYLE_KEYS = new Set(ART_STYLES.map((s) => s.key));
+const FAL_AVATAR = "fal-ai/flux-pro/kontext";
+const FAL_KLING = "fal-ai/kling-video/v1.6/standard/image-to-video"; // PAID ONLY
 
-const FAL_IMAGE_TO_IMAGE = "fal-ai/fast-lightning-sdxl/image-to-image";
-
-const FAL_KLING = "fal-ai/kling-video/v1.6/standard/image-to-video";
+const PIXAR_AVATAR_PROMPT =
+  "Transform this dog into a Pixar/Disney 3D animated character. " +
+  "Keep the exact same breed, fur color, face shape, body proportions, " +
+  "and any distinctive markings as this reference dog. Style like Dug from Up " +
+  "or the dogs from Zootopia: large warm expressive eyes, smooth CGI fur, " +
+  "vibrant Pixar color palette, soft studio lighting, white background. " +
+  "This must be recognizably the same dog, just Pixar-animated.";
 
 function getFalConfig() {
   const key = process.env.FAL_KEY;
   if (!key) throw new Error("FAL_KEY is not set");
-  console.log("Initializing fal with key prefix:", key.substring(0, 8));
   fal.config({ credentials: key });
 }
 
-/** Generate a single style image from dog photo using fal. */
-export async function generateStyleImage(
-  dogPhotoUrl: string,
-  dogName: string,
-  styleKey: ArtStyleKey
+/**
+ * Generate a single Pixar-style dog avatar from reference photos.
+ * Uses fal-ai/flux-pro/kontext. Saves to Dog.animatedAvatar or used for demo style.
+ */
+export async function generateDogAvatar(
+  photoUrls: string[],
+  dogName: string
 ): Promise<string> {
   getFalConfig();
-  console.log("FAL_KEY format check:", process.env.FAL_KEY?.substring(0, 15) + "...", "length:", process.env.FAL_KEY?.length);
+  const primaryPhoto = photoUrls[0];
+  if (!primaryPhoto) throw new Error("At least one dog photo URL is required");
 
-  const promptFn = STYLE_PROMPTS[styleKey];
-  if (!promptFn || !VALID_STYLE_KEYS.has(styleKey)) {
-    throw new Error(`Unknown or unsupported style: ${styleKey}`);
-  }
-  const prompt = promptFn(dogName);
+  const prompt = `${dogName}, ${PIXAR_AVATAR_PROMPT}`;
+  console.log("Generating dog avatar", { model: FAL_AVATAR, dogName });
 
-  console.log(`Generating style: ${styleKey}`, {
-    model: FAL_IMAGE_TO_IMAGE,
-    prompt: prompt.substring(0, 50),
-  });
-
-  // All styles use fast-lightning-sdxl image-to-image (one model, works within free concurrency)
-  const result = (await fal.subscribe(FAL_IMAGE_TO_IMAGE, {
+  const result = (await fal.subscribe(FAL_AVATAR, {
     input: {
+      image_url: primaryPhoto,
       prompt,
-      image_url: dogPhotoUrl,
-      strength: 0.85,
-      num_inference_steps: "4",
-      image_size: "square_hd",
       num_images: 1,
     },
   })) as { data?: { images?: { url: string }[] } };
+
   const imageUrl = result?.data?.images?.[0]?.url;
-  if (!imageUrl) throw new Error(`No image URL for style ${styleKey}`);
+  if (!imageUrl) throw new Error("Avatar generation returned no image URL");
   return imageUrl;
 }
 
-/** Generate one animation clip via fal Kling image-to-video. */
+/** Generate one animation clip via fal Kling image-to-video. PAID ONLY. */
 export async function generateKlingClip(
   styleImageUrl: string,
   prompt: string

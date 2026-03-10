@@ -152,16 +152,25 @@ For local-only setup (Clerk + optional DB), see [SETUP.md](./SETUP.md). For full
 
 ---
 
-## Demo trailer not generating?
+## Demo / pilot episode not generating?
 
-If you upload photos and click **Generate My Trailer** (or **Generate All Styles**) and the upload succeeds but nothing finishes:
+If you click **Start Filming!** on the demo and the loading screen never finishes (or shows "Taking longer than usual?"):
 
-1. **Background worker (Inngest)**  
-   The trailer is built by an Inngest function. Locally, start the Inngest dev server so the job runs:
+1. **Background worker (Inngest) — required**  
+   The pilot episode is built by an Inngest function. **You must run the Inngest dev server in a separate terminal**, or the job will never run and the loading screen will stay stuck.
+
    ```bash
-   npx inngest-cli@latest dev
+   npm run inngest:dev
    ```
-   Keep it running in a separate terminal while you use the app. In production, use the Inngest Cloud dashboard and set `INNGEST_EVENT_KEY` (and `INNGEST_SIGNING_KEY`).
+   Or: `npx inngest-cli@latest dev -u http://localhost:2000/api/inngest`
+
+   Keep this running while you use the app. The app runs on port **2000**; the CLI points at `http://localhost:2000/api/inngest`.
+
+   **If you see "Inngest API Error: 401 Event key not found":** Your app must send an event key when calling Inngest. Add to `.env.local`:
+   - **Local dev:** Run `npm run inngest:dev`, then open the Inngest dev UI (e.g. **http://localhost:8288**). In the UI, open **Manage** or **Sync** and copy the **Event key** (or **Signing key**). Add it to `.env.local` as `INNGEST_EVENT_KEY=...` and restart your Next.js dev server.
+   - **Production:** Use [Inngest Cloud](https://www.inngest.com); in the dashboard get your Event key and set `INNGEST_EVENT_KEY` and `INNGEST_SIGNING_KEY` in your host’s environment variables.
+
+   If `npm run inngest:dev` fails with **address already in use** (e.g. 8288 or 50052), another Inngest dev server is already running. Use that one, or stop it and start a fresh one.
 
 2. **Database**  
    The demo stores jobs in the `PreviewGeneration` table. If you haven’t run migrations (or `npx prisma db push`), the create will fail. Run:
@@ -174,4 +183,4 @@ If you upload photos and click **Generate My Trailer** (or **Generate All Styles
    If the job runs but the pipeline fails (e.g. missing API keys or FFmpeg), the status is set to **failed** and the UI shows the error after polling. Check your env for Replicate, Anthropic (Claude), ElevenLabs, and Supabase; the pipeline needs all of these.
 
 4. **Taking too long**  
-   After about 2 minutes on the loading screen, the app shows a hint and a **Back to upload** button. Use that if the worker isn’t running or the job is stuck.
+   After about 2 minutes on the loading screen, the app shows a hint and a **Back to demo** button. Use that if the worker isn’t running or the job is stuck.

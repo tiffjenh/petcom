@@ -1,10 +1,22 @@
+import { redirect } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { PawCastLogo } from "@/components/shared/PawCastLogo";
 import { LandingAuthCta, LandingHeaderAuth } from "@/components/landing-auth-cta";
 import { Film, Play } from "lucide-react";
+import { getOrCreateDbUser } from "@/lib/clerk-user";
+import { prisma } from "@/lib/prisma";
 
-export default function LandingPage() {
+export default async function LandingPage() {
+  const user = await getOrCreateDbUser();
+  if (user) {
+    const household = await prisma.household.findUnique({
+      where: { userId: user.id },
+      select: { id: true },
+    });
+    if (household?.id) redirect(`/studio/${household.id}`);
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-cream/90 via-background to-background">
       <header className="border-b border-border/50 bg-background/80 backdrop-blur-sm">

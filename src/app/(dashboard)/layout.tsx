@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { auth } from "@clerk/nextjs/server";
 import Link from "next/link";
 import { UserButton } from "@clerk/nextjs";
-import { Film, Users, Settings, CreditCard, Home } from "lucide-react";
+import { Film, Users, Settings, CreditCard, Home, Tv2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { PawCastLogo } from "@/components/shared/PawCastLogo";
 import { Button } from "@/components/ui/button";
@@ -10,7 +10,7 @@ import { EpisodeRealtimeSubscriber } from "@/components/episode-realtime-subscri
 import { prisma } from "@/lib/prisma";
 import { getOrCreateDbUser, getOrCreateSubscription } from "@/lib/clerk-user";
 
-const nav = [
+const baseNav = [
   { href: "/dashboard", label: "Home", icon: Home },
   { href: "/dashboard/episodes", label: "Episodes", icon: Film },
   { href: "/dashboard/cast", label: "Cast", icon: Users },
@@ -49,6 +49,17 @@ export default async function DashboardLayout({
     select: { household: { select: { id: true } } },
   });
   const householdId = dbUserWithHousehold?.household?.id ?? null;
+
+  const nav = householdId
+    ? [
+        { href: "/dashboard", label: "Home", icon: Home },
+        { href: `/studio/${householdId}`, label: "My Studio", icon: Tv2 },
+        { href: "/dashboard/episodes", label: "Episodes", icon: Film },
+        { href: "/dashboard/cast", label: "Cast", icon: Users },
+        { href: "/dashboard/settings", label: "Settings", icon: Settings },
+        { href: "/dashboard/account", label: "Account & Billing", icon: CreditCard },
+      ]
+    : baseNav;
 
   return (
     <div className="min-h-screen bg-background flex">
@@ -89,6 +100,11 @@ export default async function DashboardLayout({
             <PawCastLogo size={28} showWordmark />
           </Link>
           <nav className="flex flex-1 justify-center gap-2">
+            {householdId && (
+              <Button variant="ghost" size="sm" asChild>
+                <Link href={`/studio/${householdId}`}>My Studio</Link>
+              </Button>
+            )}
             <Button variant="ghost" size="sm" asChild>
               <Link href="/dashboard/episodes">Episodes</Link>
             </Button>

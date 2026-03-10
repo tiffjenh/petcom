@@ -20,7 +20,7 @@ export default async function OnboardingPage() {
   return (
     <div className="mx-auto max-w-2xl space-y-8 py-8">
       <div>
-        <h1 className="text-2xl font-bold">Set up your cast</h1>
+        <h1 className="text-2xl font-bold">Create your show</h1>
         <p className="text-muted-foreground">
           Your dog is the main character (with an inner monologue). Add your dog and optional household members as supporting cast. Pick the TV comedy styles you want—we’ll match that vibe every day.
         </p>

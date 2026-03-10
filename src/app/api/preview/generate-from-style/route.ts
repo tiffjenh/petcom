@@ -32,6 +32,9 @@ export async function POST(req: Request) {
     const styleImageUrl = (body.styleImageUrl as string)?.trim();
     const dogName = (body.dogName as string)?.trim();
     const comedyStyle = typeof body.comedyStyle === "string" ? body.comedyStyle.trim() || null : null;
+    const trailerScript = body.trailerScript != null && typeof body.trailerScript === "object" ? body.trailerScript : null;
+    const artStyle = typeof body.artStyle === "string" ? body.artStyle : null;
+    const selectedShows = Array.isArray(body.selectedShows) ? body.selectedShows : [];
     if (!styleImageUrl || !dogName) {
       return NextResponse.json(
         { error: "styleImageUrl and dogName are required" },
@@ -48,6 +51,9 @@ export async function POST(req: Request) {
         photoUrls: [styleImageUrl],
         avatarUrl: styleImageUrl,
         comedyStyle,
+        trailerScript: trailerScript ?? undefined,
+        artStyle: artStyle ?? undefined,
+        selectedShows,
         status: "pending",
       },
     });

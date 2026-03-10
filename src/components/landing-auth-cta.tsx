@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { SignedIn, SignedOut, SignInButton } from "@clerk/nextjs";
+import { Show, SignInButton } from "@clerk/react";
 import { Button } from "@/components/ui/button";
 
 function useHasClerk(): boolean {
@@ -28,18 +28,18 @@ export function LandingAuthCta() {
   }
   return (
     <>
-      <SignedOut>
-        <SignInButton mode="modal">
+      <Show when="signed-out">
+        <SignInButton mode="modal" fallbackRedirectUrl="/dashboard">
           <Button size="lg" className="text-base">
             Create Your Show — Free
           </Button>
         </SignInButton>
-      </SignedOut>
-      <SignedIn>
+      </Show>
+      <Show when="signed-in">
         <Button asChild size="lg" className="text-base">
           <Link href="/demo">Try Demo — Free</Link>
         </Button>
-      </SignedIn>
+      </Show>
     </>
   );
 }
@@ -55,16 +55,16 @@ export function LandingHeaderAuth() {
   }
   return (
     <>
-      <SignedOut>
-        <SignInButton mode="modal">
+      <Show when="signed-out">
+        <SignInButton mode="modal" fallbackRedirectUrl="/dashboard">
           <Button variant="ghost">Sign in</Button>
         </SignInButton>
-      </SignedOut>
-      <SignedIn>
+      </Show>
+      <Show when="signed-in">
         <Button asChild>
           <Link href="/dashboard">Dashboard</Link>
         </Button>
-      </SignedIn>
+      </Show>
     </>
   );
 }

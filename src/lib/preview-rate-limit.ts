@@ -40,3 +40,17 @@ export async function getPreviewRateLimitRemaining(identifier: string): Promise<
   const { remaining } = await rl.limit(identifier);
   return remaining;
 }
+
+const DEMO_DAILY_CAP = 500; // ~$5/day at ~$0.01/demo
+
+/** Check daily demo run cap to prevent runaway costs. Returns true if over cap. */
+export async function checkDemoDailyCap(): Promise<boolean> {
+  const url = process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (!url || !token) return false;
+  const redis = new Redis({ url, token });
+  const todayKey = `demo:spend:${new Date().toISOString().split("T")[0]}`;
+  const todayRuns = await redis.incr(todayKey);
+  await redis.expire(todayKey, 86400); // 24h
+  return todayRuns > DEMO_DAILY_CAP;
+}

@@ -5,6 +5,9 @@ import { randomUUID } from "crypto";
 import { tmpdir } from "os";
 import ffmpeg from "fluent-ffmpeg";
 
+if (process.env.FFMPEG_PATH) ffmpeg.setFfmpegPath(process.env.FFMPEG_PATH);
+if (process.env.FFPROBE_PATH) ffmpeg.setFfprobePath(process.env.FFPROBE_PATH);
+
 let _client: ElevenLabsClient | null = null;
 function getClient(): ElevenLabsClient {
   if (!_client) {
@@ -15,11 +18,16 @@ function getClient(): ElevenLabsClient {
   return _client;
 }
 
+const PLACEHOLDER = /^\.{3}$|^\.\.\.$/;
 const NARRATOR_VOICE_ID =
-  process.env.ELEVENLABS_VOICE_ID_NARRATOR || "EXAVITQu4vr4xnSDxMaL";
+  (process.env.ELEVENLABS_VOICE_ID_NARRATOR?.trim() && !PLACEHOLDER.test(process.env.ELEVENLABS_VOICE_ID_NARRATOR.trim()))
+    ? process.env.ELEVENLABS_VOICE_ID_NARRATOR.trim()
+    : "EXAVITQu4vr4xnSDxMaL";
 /** Slightly echo-y, amused tone for dog thought bubbles (internal narrator). */
 export const THOUGHT_BUBBLE_VOICE_ID =
-  process.env.ELEVENLABS_VOICE_ID_THOUGHT || "pNInz6obpgDQGcFmaJgB";
+  (process.env.ELEVENLABS_VOICE_ID_THOUGHT?.trim() && !PLACEHOLDER.test(process.env.ELEVENLABS_VOICE_ID_THOUGHT.trim()))
+    ? process.env.ELEVENLABS_VOICE_ID_THOUGHT.trim()
+    : "pNInz6obpgDQGcFmaJgB";
 
 export async function generateSpeechToBuffer(text: string): Promise<Buffer> {
   const stream = await getClient().textToSpeech.convert(NARRATOR_VOICE_ID, {

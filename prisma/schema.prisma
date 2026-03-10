@@ -93,6 +93,7 @@ model Episode {
   householdId       String
   household         Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
   situation         EpisodeSituation?
+  plannedConcept    Json?     // chosen episode idea before script: { title, situation, category, setting, plotDevice, tags, summary }
   createdAt         DateTime  @default(now())
   publishedAt       DateTime?
 }
@@ -125,14 +126,16 @@ model PreviewGeneration {
   ip                 String?   // rate limit tracking
   dogName            String
   photoUrls          String[]  // up to 3
-  userVideoUrl       String?   // optional uploaded video
   avatarUrl          String?   // Replicate Pixar-style output
   comedyStyle        String?   // e.g. "The Office"
   trailerUrl         String?   // final 30s trailer
   status             String   @default("pending") // pending | processing | completed | failed
   errorMessage       String?
   convertedToAccount Boolean   @default(false)
-  styleImages        Json?     // { liveAction, cinematicCG, anime, watercolor, comicBook, storybook, pixelArt } from generate-styles
+  styleImages        Json?     // { liveAction, cinematicCG } from generate-styles
+  trailerScript      Json?     // full script from generateTrailerScript (scenes, visualPrompt, etc.)
+  artStyle           String?   // liveAction | cinematicCG
+  selectedShows      String[]  @default([]) // e.g. ["The Office", "Brooklyn Nine-Nine"]
   createdAt          DateTime  @default(now())
   completedAt        DateTime?
 }

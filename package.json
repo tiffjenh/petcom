@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev -p 2000",
+    "inngest:dev": "npx inngest-cli@latest dev -u http://localhost:2000/api/inngest",
     "build": "next build",
     "start": "next start -p 2000",
     "lint": "next lint",
@@ -14,7 +15,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.0",
-    "@clerk/nextjs": "^6.9.0",
+    "@clerk/nextjs": "^7.0.2",
     "@elevenlabs/elevenlabs-js": "^2.38.0",
     "@fal-ai/client": "^1.9.4",
     "@prisma/client": "^5.22.0",

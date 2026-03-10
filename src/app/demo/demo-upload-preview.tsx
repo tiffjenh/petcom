@@ -6,8 +6,6 @@ import { cn } from "@/lib/utils";
 
 const PHOTO_ACCEPT = "image/jpeg,image/png,image/heic,image/webp";
 const PHOTO_MAX_MB = 10;
-const VIDEO_ACCEPT = "video/mp4,video/quicktime";
-const VIDEO_MAX_MB = 50;
 
 type FileSlot = { file: File; previewUrl: string } | null;
 
@@ -319,24 +317,18 @@ export function useDemoUploadState() {
   const photo1 = useFileSlot(PHOTO_ACCEPT, PHOTO_MAX_MB);
   const photo2 = useFileSlot(PHOTO_ACCEPT, PHOTO_MAX_MB);
   const photo3 = useFileSlot(PHOTO_ACCEPT, PHOTO_MAX_MB);
-  const video = useFileSlot(VIDEO_ACCEPT, VIDEO_MAX_MB);
 
   const photoSlots = [photo1, photo2, photo3];
   const photos = photoSlots
     .map((p) => p.slot?.file)
     .filter((f): f is File => !!f);
-  const hasVideo = !!video.slot?.file;
 
   return {
     photo1,
     photo2,
     photo3,
-    video,
     photos,
-    hasVideo,
     photoAccept: PHOTO_ACCEPT,
     photoMaxMb: PHOTO_MAX_MB,
-    videoAccept: VIDEO_ACCEPT,
-    videoMaxMb: VIDEO_MAX_MB,
   };
 }

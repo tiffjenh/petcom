@@ -11,6 +11,22 @@ export type EpisodeHistoryEntry = {
   category?: string;
 };
 
+/** One candidate episode idea (no full script yet). */
+export type EpisodeCandidate = {
+  title: string;
+  situation: string;
+  category: string;
+  setting: string;
+  plotDevice: string;
+  tags: string[];
+  reason: string; // e.g. "unused trait: squirrel obsession", "seasonal: holiday guests"
+};
+
+/** Chosen concept saved to Episode.plannedConcept and used when writing the script. */
+export type PlannedConcept = EpisodeCandidate & {
+  summary: string; // human-readable why this was chosen, for API response
+};
+
 /** Script returned by the director; extends EpisodeScriptJson with situation metadata. */
 export type DirectorScriptJson = EpisodeScriptJson & {
   situation: string;
@@ -55,6 +71,142 @@ export async function getEpisodeHistory(
   }));
 }
 
+/** Similarity of a candidate to past episodes. 0 = not similar, 1 = very similar. Proceed when <= 0.2. */
+export function computeSimilarity(
+  candidate: EpisodeCandidate,
+  episodeHistory: EpisodeHistoryEntry[]
+): number {
+  if (episodeHistory.length === 0) return 0;
+  const candTags = new Set((candidate.tags || []).map((t) => t.toLowerCase()));
+  const candWords = new Set(
+    (candidate.plotDevice + " " + candidate.situation)
+      .toLowerCase()
+      .split(/\s+/)
+      .filter((w) => w.length > 2)
+  );
+  let maxScore = 0;
+  for (const prev of episodeHistory) {
+    if (prev.situation === candidate.situation) return 1;
+    let score = 0;
+    if (prev.category && prev.category === candidate.category) score += 0.25;
+    const prevTags = new Set((prev.tags || []).map((t) => t.toLowerCase()));
+    const tagOverlap = [...candTags].filter((t) => prevTags.has(t)).length;
+    score += Math.min(0.4, tagOverlap * 0.15);
+    const prevWords = new Set(
+      (prev.plotDevice + " " + prev.situation)
+        .toLowerCase()
+        .split(/\s+/)
+        .filter((w) => w.length > 2)
+    );
+    const wordOverlap = [...candWords].filter((w) => prevWords.has(w)).length;
+    score += Math.min(0.35, (wordOverlap / Math.max(1, candWords.size)) * 2);
+    if (score > maxScore) maxScore = score;
+  }
+  return Math.min(1, maxScore);
+}
+
+const SITUATION_BANK_SHORT = `
+HOME: morning routine, bath time, vacuum panic, doorbell chaos, package delivery, window squirrel, counter surfing, stealing laundry, hiding spots, new furniture, remote theft, trash raid, toilet paper...
+OUTDOORS: walk detour, dog park, car ride anxiety, vet visit, pet store, puddle jumping, squirrel chase, mailman standoff, neighbor dog rivalry...
+SOCIAL: zoom interruption, dinner party, baby visitor, other dog guest, cat encounter, pizza delivery...
+SEASONAL: Halloween costume, Christmas tree, Thanksgiving smells, summer heat, first snow, fireworks, spring mud...
+EMOTIONAL: owner leaving guilt, welcome home, new pet jealousy, favorite toy gone, dream sequence, favorite human...
+`;
+
+/** Generate 3 candidate episode ideas (no full script). Uses dog profile + episode history to favor unused traits and variety. */
+export async function generateEpisodeCandidates(
+  household: HouseholdForDirector,
+  episodeHistory: EpisodeHistoryEntry[],
+  episodeNumber: number
+): Promise<EpisodeCandidate[]> {
+  const dog = household.dogs[0];
+  const dogLine = dog
+    ? `${dog.name}: personality ${(dog.personality || []).join(", ")}; character bio: ${dog.characterBio || "none"}`
+    : "Main dog";
+  const previousBlock =
+    episodeHistory.length === 0
+      ? "No previous episodes yet."
+      : episodeHistory
+          .slice(0, 10)
+          .map(
+            (e) =>
+              `- ${e.plotDevice} (${e.setting}, ${e.category ?? "unknown"}, tags: ${(e.tags || []).join(", ")})`
+          )
+          .join("\n");
+  const seasonalHint = getSeasonalHint();
+  const system = `You are the head writer of a pet sitcom. Your job is to propose 3 different episode IDEAS (concepts only — no script).
+
+DOG PROFILE:
+${dogLine}
+
+PREVIOUS EPISODES (do not repeat these themes too closely):
+${previousBlock}
+${seasonalHint ? `\nSEASONAL: ${seasonalHint}\n` : ""}
+
+RULES:
+1. Propose exactly 3 candidates. Vary them: e.g. one using an UNUSED trait/obsession from the dog profile, one SEASONAL if relevant, one different category/setting.
+2. Each candidate must have: title (short, funny), situation (snake_case), category (home|outdoor|social|seasonal|emotional), setting, plotDevice (one sentence), tags (string array), reason (one short sentence why this idea — e.g. "unused trait: squirrel obsession" or "seasonal: holiday guests").
+3. Draw from this situation bank: ${SITUATION_BANK_SHORT}
+4. Return ONLY valid JSON array of 3 objects, no markdown: [ { "title": "...", "situation": "...", "category": "...", "setting": "...", "plotDevice": "...", "tags": [...], "reason": "..." }, ... ]`;
+
+  const user = `Propose 3 episode ideas for Episode ${episodeNumber} of "${household.showTitle}". Return ONLY the JSON array.`;
+
+  const client = getClient();
+  const response = await client.messages.create({
+    model: "claude-sonnet-4-20250514",
+    max_tokens: 1500,
+    system,
+    messages: [{ role: "user", content: user }],
+  });
+  const textBlock = response.content.find((c) => c.type === "text");
+  if (!textBlock || textBlock.type !== "text") throw new Error("No text in response");
+  let raw = textBlock.text.trim();
+  const jsonMatch = raw.match(/\[[\s\S]*\]/);
+  if (jsonMatch) raw = jsonMatch[0];
+  const parsed = JSON.parse(raw) as EpisodeCandidate[];
+  if (!Array.isArray(parsed) || parsed.length < 3) throw new Error("Expected 3 candidates");
+  return parsed.slice(0, 3).map((c) => ({
+    title: String(c.title ?? "Episode"),
+    situation: String(c.situation ?? "unknown"),
+    category: String(c.category ?? "home"),
+    setting: String(c.setting ?? "living room"),
+    plotDevice: String(c.plotDevice ?? ""),
+    tags: Array.isArray(c.tags) ? c.tags.map(String) : [],
+    reason: String(c.reason ?? ""),
+  }));
+}
+
+/** Pick next episode concept: 3 candidates, similarity check, return chosen concept + summary. */
+export async function getNextEpisodeConcept(
+  householdId: string
+): Promise<{ concept: PlannedConcept; summary: string }> {
+  const household = await getHouseholdForDirector(householdId);
+  if (!household) throw new Error("Household not found");
+  const episodeHistory = await getEpisodeHistory(householdId);
+  const episodeNumber = episodeHistory.length + 1;
+
+  const candidates = await generateEpisodeCandidates(
+    household,
+    episodeHistory,
+    episodeNumber
+  );
+
+  const SIMILARITY_THRESHOLD = 0.2;
+  const withScore = candidates.map((c) => ({
+    candidate: c,
+    similarity: computeSimilarity(c, episodeHistory),
+  }));
+  const passed = withScore.filter((w) => w.similarity <= SIMILARITY_THRESHOLD);
+  const chosen = passed[0] ?? withScore.sort((a, b) => a.similarity - b.similarity)[0];
+  const concept: PlannedConcept = {
+    ...chosen.candidate,
+    summary: chosen.similarity <= SIMILARITY_THRESHOLD
+      ? `Chose "${chosen.candidate.title}" because ${chosen.candidate.reason}, and it's sufficiently different from recent episodes (${Math.round((1 - chosen.similarity) * 100)}% fresh).`
+      : `Chose "${chosen.candidate.title}" (${chosen.candidate.reason}). Best available option; ${Math.round((1 - chosen.similarity) * 100)}% different from recent episodes.`,
+  };
+  return { concept, summary: concept.summary };
+}
+
 const SITUATION_BANK = `
 HOME: morning routine, bath time, vacuum cleaner panic, doorbell chaos, package delivery, window squirrel, counter surfing, stealing laundry, hiding spots, new furniture confusion, remote control theft, trash can raid, toilet paper destruction...
 
@@ -83,7 +235,8 @@ function getSeasonalHint(): string | null {
 export function buildScriptPrompt(
   household: HouseholdForDirector,
   episodeHistory: EpisodeHistoryEntry[],
-  episodeNumber: number
+  episodeNumber: number,
+  plannedConcept?: PlannedConcept
 ): { system: string; user: string } {
   const selectedShows =
     household.showStyle?.length > 0
@@ -146,6 +299,15 @@ RULES:
 7. Draw from this situation bank but be creative:
 ${SITUATION_BANK}
 ${seasonalSection}
+${plannedConcept ? `
+MANDATORY — YOU MUST WRITE THE SCRIPT FOR THIS EXACT EPISODE CONCEPT (do not change title, situation, or plot):
+- Title: ${plannedConcept.title}
+- Situation: ${plannedConcept.situation}
+- Category: ${plannedConcept.category}
+- Setting: ${plannedConcept.setting}
+- Plot device: ${plannedConcept.plotDevice}
+- Tags: ${(plannedConcept.tags || []).join(", ")}
+` : ""}
 
 OUTPUT: Return ONLY valid JSON, no markdown or code fences. Use this exact structure:
 {
@@ -174,7 +336,9 @@ OUTPUT: Return ONLY valid JSON, no markdown or code fences. Use this exact struc
   ]
 }`;
 
-  const user = `Write Episode ${episodeNumber} for "${household.showTitle}". Return ONLY the JSON object, no other text.`;
+  const user = plannedConcept
+    ? `Write the full script for Episode ${episodeNumber} of "${household.showTitle}" using EXACTLY this concept: "${plannedConcept.title}" — ${plannedConcept.plotDevice}. Return ONLY the JSON object, no other text.`
+    : `Write Episode ${episodeNumber} for "${household.showTitle}". Return ONLY the JSON object, no other text.`;
 
   return { system, user };
 }
@@ -284,16 +448,29 @@ export async function getHouseholdForDirector(
 
 /**
  * Generate a unique, non-repeating episode script for the household.
+ * When plannedConcept is provided (from getNextEpisodeConcept), writes the script for that exact concept without retries.
  * Call saveEpisodeSituation(episodeId, script) after creating/updating the episode with this script.
  */
 export async function generateEpisodeScript(
-  householdId: string
+  householdId: string,
+  options?: { plannedConcept?: PlannedConcept }
 ): Promise<DirectorScriptJson> {
   const household = await getHouseholdForDirector(householdId);
   if (!household) throw new Error("Household not found");
 
   const episodeHistory = await getEpisodeHistory(householdId);
   const episodeNumber = episodeHistory.length + 1;
+  const plannedConcept = options?.plannedConcept;
+
+  if (plannedConcept) {
+    const { system, user } = buildScriptPrompt(
+      household,
+      episodeHistory,
+      episodeNumber,
+      plannedConcept
+    );
+    return callClaude(system, user);
+  }
 
   let attempts = 0;
   let script: DirectorScriptJson | null = null;

@@ -5,6 +5,7 @@
  */
 
 import { prisma } from "@/lib/prisma";
+import webpush from "web-push";
 
 const baseUrl = () => process.env.NEXT_PUBLIC_APP_URL ?? "https://app.pawcast.com";
 
@@ -71,8 +72,6 @@ export async function sendUpgradePromptEmail(userEmail: string): Promise<void> {
     `,
   });
 }
-
-import webpush from "web-push";
 
 export type NotifyEpisodeReadyParams = {
   episodeTitle: string;

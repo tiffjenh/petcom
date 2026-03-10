@@ -3,6 +3,7 @@ import { getOrCreateDbUser } from "@/lib/clerk-user";
 import { prisma } from "@/lib/prisma";
 import { inngest } from "@/inngest/client";
 import { getPlanLimits } from "@/lib/plans";
+import { getNextEpisodeConcept } from "@/lib/episodeDirector";
 
 function startOfWeek(d: Date): Date {
   const x = new Date(d);
@@ -58,15 +59,20 @@ export async function POST(req: Request) {
       );
     }
 
+    const { concept, summary } = await getNextEpisodeConcept(household.id);
+    const nextNum = episodeNum ?? (await prisma.episode.count({ where: { householdId: household.id } })) + 1;
+    const nextSeason = season ?? 1;
+
     const episode = await prisma.episode.create({
       data: {
         householdId: household.id,
-        title: `Episode ${episodeNum ?? 1}`,
-        episodeNum: episodeNum ?? 1,
-        season: season ?? 1,
+        title: concept.title,
+        episodeNum: nextNum,
+        season: nextSeason,
         synopsis: "",
         script: {},
         status: "generating",
+        plannedConcept: concept as object,
       },
     });
 
@@ -80,7 +86,7 @@ export async function POST(req: Request) {
       },
     });
 
-    return NextResponse.json({ episodeId: episode.id });
+    return NextResponse.json({ episodeId: episode.id, summary });
   } catch (e) {
     console.error(e);
     return NextResponse.json(

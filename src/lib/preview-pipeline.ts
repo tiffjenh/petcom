@@ -1,10 +1,13 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { prisma } from "@/lib/prisma";
 import { getSupabaseAdmin } from "@/lib/supabase";
-import { generateVideoClip, generateSceneClip } from "@/lib/ai/replicate";
+import { generateSceneClip } from "@/lib/ai/replicate";
 import { generateSpeechToBuffer } from "@/lib/ai/elevenlabs";
-import { generateDogAvatar } from "@/lib/ai/avatar";
-import * as astria from "@/lib/astria";
+import { generateDogAvatar as generateDogAvatarFal } from "@/lib/ai/fal-styles";
+import {
+  getArtStyleVideoSuffix,
+  type TrailerScript,
+} from "@/lib/ai/trailer-script";
 import * as fal from "@/lib/fal";
 import {
   downloadToTemp,
@@ -45,20 +48,18 @@ async function generatePreviewScript(
   thoughtBubbleText: string;
   sceneDescriptions: [string, string, string];
 }> {
-  const client = new Anthropic({
-    apiKey: process.env.ANTHROPIC_API_KEY!,
-  });
+  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
   const response = await client.messages.create({
     model: "claude-sonnet-4-20250514",
     max_tokens: 400,
     messages: [
       {
         role: "user",
-        content: `Write a 30-second trailer for a Pixar-style sitcom starring a dog named ${dogName}. Comedy style: ${comedyStyle}. 
+        content: `Write a 30-second trailer for a Pixar-style sitcom starring a dog named ${dogName}. Comedy style: ${comedyStyle}.
 Output JSON only with these keys:
-- narratorText: 1-2 sentences for a warm narrator voiceover (e.g. "Meet ${dogName}. This week, one nap turns into the greatest adventure of the year.")
-- thoughtBubbleText: one short funny inner thought from the dog (e.g. "Why is the vacuum back? I thought we had a deal.")
-- sceneDescriptions: array of exactly 3 short scene descriptions for 5-second video clips (e.g. ["sitting and looking at camera", "wagging tail happily", "running forward playfully"])`,
+- narratorText: 1-2 sentences for a warm narrator voiceover
+- thoughtBubbleText: one short funny inner thought from the dog
+- sceneDescriptions: array of exactly 3 short scene descriptions for 5-second video clips`,
       },
     ],
   });
@@ -82,59 +83,28 @@ Output JSON only with these keys:
   };
 }
 
-const LORA_WAIT_MS = 2 * 60 * 1000; // 2 min max wait for LoRA on demo
-const LORA_POLL_MS = 15 * 1000; // poll every 15s
-
-const PIXAR_AVATAR_PROMPT = (dogName: string) =>
-  `ohwx dog, ${dogName}, Pixar 3D animated character portrait, big expressive eyes, warm lighting, friendly smile, Disney/Pixar art style, high detail fur, vibrant colors, white background, character sheet`;
-
+/**
+ * Generate Pixar-style avatar: use FAL (photo refs) when we have photoUrls,
+ * otherwise existing cached avatar.
+ */
 async function getAvatarUrl(
   dogName: string,
   photoUrls: string[],
-  existingLoraId: string | null
+  existingAvatarUrl: string | null
 ): Promise<string> {
-  let tuneId: string | null = existingLoraId ?? null;
-
-  if (!tuneId && process.env.ASTRIA_API_KEY && photoUrls.length > 0) {
-    try {
-      tuneId = await astria.trainDogLora(dogName, photoUrls);
-      const deadline = Date.now() + LORA_WAIT_MS;
-      while (Date.now() < deadline) {
-        const status = await astria.checkLoraStatus(tuneId);
-        if (status === "ready") break;
-        await new Promise((r) => setTimeout(r, LORA_POLL_MS));
-      }
-      const status = await astria.checkLoraStatus(tuneId);
-      if (status !== "ready") tuneId = null;
-    } catch (e) {
-      console.error("[Astria] LoRA training failed:", e);
-      tuneId = null;
-    }
-  }
-
-  if (tuneId && process.env.ASTRIA_API_KEY) {
-    try {
-      return await astria.generateWithLora(
-        tuneId,
-        PIXAR_AVATAR_PROMPT(dogName)
-      );
-    } catch (e) {
-      console.error("[Astria] generateWithLora failed:", e);
-    }
-  }
+  if (existingAvatarUrl) return existingAvatarUrl;
+  if (photoUrls.length === 0) throw new Error("No photo URLs for avatar");
 
   try {
-    return await generateDogAvatar(dogName, null);
+    return await generateDogAvatarFal(photoUrls, dogName);
   } catch (e) {
-    console.error("[Replicate] SDXL avatar fallback failed:", e);
+    console.error("[FAL] Avatar failed:", e);
     throw new Error("Could not generate avatar");
   }
 }
 
 export async function runPreviewPipeline(jobId: string): Promise<void> {
-  const record = await prisma.previewGeneration.findUnique({
-    where: { jobId },
-  });
+  const record = await prisma.previewGeneration.findUnique({ where: { jobId } });
   if (!record || record.status !== "pending") return;
 
   await prisma.previewGeneration.update({
@@ -145,50 +115,109 @@ export async function runPreviewPipeline(jobId: string): Promise<void> {
   const comedyStyle = record.comedyStyle ?? pickComedyStyle();
   const dogName = record.dogName;
   const breed = "";
+  const trailerScript = record.trailerScript as TrailerScript | null;
+  const artStyle = record.artStyle ?? "liveAction";
 
-  let avatarUrl: string | null = record.avatarUrl ?? null;
   let clipPaths: string[] = [];
   let audioPath: string | null = null;
   let outPath: string | null = null;
 
   try {
-    if (!avatarUrl) {
-      avatarUrl = await getAvatarUrl(dogName, record.photoUrls, null);
-    }
+    // ── STEP 1: avatar + script in parallel ─────────────────────────────────
+    // Avatar and script generation are independent — run them at the same time.
+    const [avatarUrl, scriptData] = await Promise.all([
+      getAvatarUrl(dogName, record.photoUrls, record.avatarUrl ?? null),
+      (async () => {
+        if (
+          trailerScript &&
+          Array.isArray(trailerScript.scenes) &&
+          trailerScript.scenes.length >= 3
+        ) {
+          const narratorText =
+            [trailerScript.openingSlate, trailerScript.endSlate]
+              .filter(Boolean)
+              .join(" ") || `Meet ${dogName}. Coming this fall.`;
+          return {
+            narratorText,
+            sceneDescriptions: [
+              trailerScript.scenes[0]?.description ?? "",
+              trailerScript.scenes[1]?.description ?? "",
+              trailerScript.scenes[2]?.description ?? "",
+            ] as [string, string, string],
+          };
+        }
+        const generated = await generatePreviewScript(dogName, comedyStyle);
+        return {
+          narratorText: generated.narratorText,
+          sceneDescriptions: generated.sceneDescriptions,
+        };
+      })(),
+    ]);
+
     await prisma.previewGeneration.update({
       where: { jobId },
       data: { avatarUrl, comedyStyle },
     });
 
-    const {
-      narratorText,
-      thoughtBubbleText: _thoughtBubbleText,
-      sceneDescriptions,
-    } = await generatePreviewScript(dogName, comedyStyle);
+    const { narratorText, sceneDescriptions } = scriptData;
+    const artStyleSuffix = getArtStyleVideoSuffix(artStyle);
 
-    const audioBuffer = await generateSpeechToBuffer(narratorText);
+    // ── STEP 2: audio + all 3 clips in parallel ──────────────────────────────
+    // Previously: audio first, then clips sequentially.
+    // Now: all 4 tasks fire at once. Saves ~15-30s.
+    const clipPromises =
+      trailerScript &&
+      Array.isArray(trailerScript.scenes) &&
+      trailerScript.scenes.length >= 3
+        ? trailerScript.scenes.slice(0, 3).map((scene) => {
+            const fullPrompt = [scene.visualPrompt, artStyleSuffix]
+              .filter(Boolean)
+              .join(", ");
+            return fal
+              .animateScene(
+                avatarUrl,
+                fullPrompt,
+                typeof scene.duration === "number" ? scene.duration : 5
+              )
+              .catch((e) => {
+                console.error("[fal] Kling clip failed:", e);
+                return null;
+              });
+          })
+        : sceneDescriptions.map((desc, i) =>
+            fal
+              .animateScene(
+                avatarUrl,
+                [
+                  fal.generateScenePrompt(
+                    { sceneIndex: i, description: desc },
+                    dogName,
+                    breed
+                  ),
+                  artStyleSuffix,
+                ]
+                  .filter(Boolean)
+                  .join(", "),
+                5
+              )
+              .catch((e) => {
+                console.error("[fal] Kling clip failed:", e);
+                return null;
+              })
+          );
+
+    const [audioBuffer, ...klingResults] = await Promise.all([
+      generateSpeechToBuffer(narratorText),
+      ...clipPromises,
+    ]);
+
+    // Write audio to temp file
     audioPath = join(tmpdir(), `${randomUUID()}.mp3`);
-    await writeFile(audioPath, audioBuffer);
+    await writeFile(audioPath, audioBuffer as Buffer);
 
-    let klingClips: string[] = [];
-    try {
-      const scenes: fal.SceneData[] = sceneDescriptions.map((desc, i) => ({
-        sceneIndex: i,
-        description: desc,
-      }));
-      klingClips = await Promise.all(
-        scenes.map((scene) =>
-          fal.animateScene(
-            avatarUrl!,
-            fal.generateScenePrompt(scene, dogName, breed),
-            5
-          )
-        )
-      );
-    } catch (e) {
-      console.error("[fal] Kling scene animation failed:", e);
-    }
+    const klingClips = klingResults.filter((u): u is string => typeof u === "string");
 
+    // ── STEP 3: assemble ─────────────────────────────────────────────────────
     if (klingClips.length >= 3) {
       const paths = await Promise.all(
         klingClips.map((url) => downloadToTemp(url, "mp4"))
@@ -197,8 +226,9 @@ export async function runPreviewPipeline(jobId: string): Promise<void> {
       outPath = join(tmpdir(), `${randomUUID()}_trailer.mp4`);
       await assembleTrailerFromClips(paths, audioPath, outPath);
     } else {
+      // Fallback: single SVD clip
       try {
-        const svdUrl = await generateSceneClip(avatarUrl!, undefined);
+        const svdUrl = await generateSceneClip(avatarUrl, undefined);
         const singlePath = await downloadToTemp(svdUrl, "mp4");
         clipPaths = [singlePath];
         outPath = join(tmpdir(), `${randomUUID()}_trailer.mp4`);
@@ -209,6 +239,7 @@ export async function runPreviewPipeline(jobId: string): Promise<void> {
       }
     }
 
+    // ── STEP 4: upload ───────────────────────────────────────────────────────
     const bucket =
       process.env.NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET ?? "pawcast-media";
     const key = `previews/${record.jobId}/trailer.mp4`;
@@ -220,35 +251,26 @@ export async function runPreviewPipeline(jobId: string): Promise<void> {
     });
     if (error) throw new Error(error.message);
     const { data: urlData } = supabase.storage.from(bucket).getPublicUrl(key);
-    const trailerUrl = urlData.publicUrl;
 
     await prisma.previewGeneration.update({
       where: { jobId },
       data: {
         status: "completed",
-        trailerUrl,
+        trailerUrl: urlData.publicUrl,
         completedAt: new Date(),
       },
     });
   } catch (err) {
-    const raw = err instanceof Error ? err.message : "Trailer generation failed";
+    const raw = err instanceof Error ? err.message : String(err);
     console.error("[Preview pipeline]", raw);
     await prisma.previewGeneration.update({
       where: { jobId },
-      data: {
-        status: "failed",
-        errorMessage: "Trailer generation failed",
-      },
+      data: { status: "failed", errorMessage: raw.slice(0, 500) },
     });
     throw err;
   } finally {
-    const toUnlink = [...clipPaths, audioPath, outPath].filter(
-      Boolean
-    ) as string[];
-    for (const p of toUnlink) {
-      try {
-        await unlink(p);
-      } catch (_) {}
+    for (const p of [...clipPaths, audioPath, outPath].filter(Boolean) as string[]) {
+      try { await unlink(p); } catch (_) {}
     }
   }
 }

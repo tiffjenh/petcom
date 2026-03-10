@@ -26,6 +26,8 @@ export default async function DashboardHomePage() {
 
   if (!dbUser) redirect("/sign-in");
   const household = dbUser.household;
+
+  if (household?.id) redirect(`/studio/${household.id}`);
   const limits = getPlanLimits(dbUser.subscription?.plan);
   const hasCast = (household?.dogs.length ?? 0) > 0;
   let episodes = household?.episodes ?? [];
