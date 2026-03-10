@@ -16,9 +16,6 @@ import { writeFile, readFile, unlink } from "fs/promises";
 
 const VERTICAL_W = 1080;
 const VERTICAL_H = 1920;
-const INTRO_DURATION = 5;
-const TITLE_CARD_DURATION = 3;
-const CREDITS_DURATION = 5;
 
 async function downloadToTemp(url: string, ext: string): Promise<string> {
   const res = await fetch(url);
@@ -34,138 +31,6 @@ async function downloadToTemp(url: string, ext: string): Promise<string> {
 
 function bufferToTempPath(): string {
   return join(tmpdir(), `${randomUUID()}`);
-}
-
-/** Escape for ffmpeg drawtext (single quotes). */
-function escapeDrawText(s: string): string {
-  return s.replace(/'/g, "'\\''");
-}
-
-/** Generate a short segment: solid color + centered text, silent audio. */
-function generateTextSegment(
-  text: string,
-  durationSec: number,
-  outputPath: string
-): Promise<void> {
-  const escaped = escapeDrawText(text);
-  const filter =
-    `color=c=#1a1a2e:s=${VERTICAL_W}x${VERTICAL_H}:d=${durationSec}[v];` +
-    `[v]drawtext=text='${escaped}':fontsize=72:fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2:borderw=2:bordercolor=black[out]`;
-  return new Promise((resolve, reject) => {
-    ffmpeg()
-      .input("anullsrc=r=44100:cl=stereo")
-      .inputFormat("lavfi")
-      .inputOptions(["-f", "lavfi", "-t", String(durationSec)])
-      .outputOptions([
-        "-filter_complex",
-        filter,
-        "-map",
-        "[out]",
-        "-map",
-        "0:a",
-        "-c:v",
-        "libx264",
-        "-preset",
-        "fast",
-        "-c:a",
-        "aac",
-        "-shortest",
-      ])
-      .output(outputPath)
-      .on("end", () => resolve())
-      .on("error", reject)
-      .run();
-  });
-}
-
-/** Generate credits segment: cast list + "A PawCast Original". */
-function generateCreditsSegment(
-  castNames: string[],
-  outputPath: string
-): Promise<void> {
-  const line1 = castNames.length ? `Cast: ${castNames.join(", ")}` : "Cast: —";
-  const line2 = "A PawCast Original";
-  const e1 = escapeDrawText(line1);
-  const e2 = escapeDrawText(line2);
-  const filter =
-    `color=c=#1a1a2e:s=${VERTICAL_W}x${VERTICAL_H}:d=${CREDITS_DURATION}[v];` +
-    `[v]drawtext=text='${e1}':fontsize=48:fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2-60[vt];` +
-    `[vt]drawtext=text='${e2}':fontsize=56:fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2+20[out]`;
-  return new Promise((resolve, reject) => {
-    ffmpeg()
-      .input("anullsrc=r=44100:cl=stereo")
-      .inputFormat("lavfi")
-      .inputOptions(["-f", "lavfi", "-t", String(CREDITS_DURATION)])
-      .outputOptions([
-        "-filter_complex",
-        filter,
-        "-map",
-        "[out]",
-        "-map",
-        "0:a",
-        "-c:v",
-        "libx264",
-        "-preset",
-        "fast",
-        "-c:a",
-        "aac",
-        "-shortest",
-      ])
-      .output(outputPath)
-      .on("end", () => resolve())
-      .on("error", reject)
-      .run();
-  });
-}
-
-/** Merge one scene clip (URL) + scene audio (buffer), scale to 1080x1920, output MP4 path. */
-async function buildSceneSegment(
-  clipUrl: string,
-  audioBuffer: Buffer
-): Promise<string> {
-  const videoPath = await downloadToTemp(clipUrl, "mp4");
-  const outPath = bufferToTempPath() + "-scene.mp4";
-  const hasAudio = audioBuffer.length > 0;
-  if (hasAudio) {
-    const audioPath = bufferToTempPath() + ".mp3";
-    await writeFile(audioPath, audioBuffer);
-    await new Promise<void>((resolve, reject) => {
-      ffmpeg(videoPath)
-        .input(audioPath)
-        .outputOptions([
-          "-filter:v",
-          `scale=${VERTICAL_W}:${VERTICAL_H}:force_original_aspect_ratio=decrease,pad=${VERTICAL_W}:${VERTICAL_H}:(ow-iw)/2:(oh-ih)/2`,
-          "-c:a",
-          "aac",
-          "-shortest",
-        ])
-        .output(outPath)
-        .on("end", () => resolve())
-        .on("error", reject)
-        .run();
-    });
-    await unlink(audioPath).catch(() => {});
-  } else {
-    await new Promise<void>((resolve, reject) => {
-      ffmpeg(videoPath)
-        .input("anullsrc=r=44100:cl=stereo")
-        .inputFormat("lavfi")
-        .inputOptions(["-f", "lavfi", "-t", "60"])
-        .outputOptions([
-          "-filter:v",
-          `scale=${VERTICAL_W}:${VERTICAL_H}:force_original_aspect_ratio=decrease,pad=${VERTICAL_W}:${VERTICAL_H}:(ow-iw)/2:(oh-ih)/2`,
-          "-c:a",
-          "aac",
-          "-shortest",
-        ])
-        .output(outPath)
-        .on("end", () => resolve())
-        .on("error", reject)
-        .run();
-    });
-  }
-  await unlink(videoPath).catch(() => {});
-  return outPath;
 }
 
 export type AssembleFullEpisodeParams = {
@@ -185,20 +50,21 @@ export type AssembleFullEpisodeResult = {
 };
 
 /**
- * Full pipeline: intro (5s) + episode title card (3s) + scene segments + credits (5s).
- * Encodes vertical 1080x1920 and landscape 1920x1080; thumbnail = first frame of scene 2 (or scene 1).
+ * Simple pipeline: download clips → concat video → mux with concat audio → vertical + landscape + thumbnail.
+ * No intro/title/credits, no lavfi.
  */
 export async function assembleFullEpisode(
   params: AssembleFullEpisodeParams
 ): Promise<AssembleFullEpisodeResult> {
   const {
-    showTitle,
-    episodeTitle,
-    castNames,
     sceneClipUrls,
     sceneAudioBuffers,
     applyWatermark = true,
   } = params;
+
+  if (sceneClipUrls.length === 0) {
+    throw new Error("At least one scene clip URL required");
+  }
 
   const cleanup: string[] = [];
   const addCleanup = (p: string) => {
@@ -207,50 +73,100 @@ export async function assembleFullEpisode(
   };
 
   try {
-    const introPath = addCleanup(bufferToTempPath() + "-intro.mp4");
-    await generateTextSegment(showTitle, INTRO_DURATION, introPath);
-
-    const titleCardPath = addCleanup(bufferToTempPath() + "-title.mp4");
-    await generateTextSegment(episodeTitle, TITLE_CARD_DURATION, titleCardPath);
-
-    const scenePaths: string[] = [];
+    // 1. Download each clip to temp file
+    const clipPaths: string[] = [];
     for (let i = 0; i < sceneClipUrls.length; i++) {
-      const audio = sceneAudioBuffers[i];
-      const segmentPath = await buildSceneSegment(
-        sceneClipUrls[i],
-        audio && audio.length > 0 ? audio : Buffer.alloc(0)
-      );
-      cleanup.push(segmentPath);
-      scenePaths.push(segmentPath);
+      const path = await downloadToTemp(sceneClipUrls[i], "mp4");
+      addCleanup(path);
+      clipPaths.push(path);
     }
 
-    const creditsPath = addCleanup(bufferToTempPath() + "-credits.mp4");
-    await generateCreditsSegment(castNames, creditsPath);
-
-    const allSegments = [introPath, titleCardPath, ...scenePaths, creditsPath];
-    const listPath = join(tmpdir(), `${randomUUID()}-concat.txt`);
-    const listContent = allSegments
+    // 2. Concat all video clips (concat demuxer)
+    const listPathV = addCleanup(join(tmpdir(), `${randomUUID()}-vlist.txt`));
+    const listContentV = clipPaths
       .map((p) => `file '${p.replace(/'/g, "'\\''")}'`)
       .join("\n");
-    await writeFile(listPath, listContent);
-    cleanup.push(listPath);
+    await writeFile(listPathV, listContentV);
 
-    const fullVerticalPath = join(tmpdir(), `${randomUUID()}-full-vertical.mp4`);
+    const rawVideoPath = addCleanup(join(tmpdir(), `${randomUUID()}-raw-video.mp4`));
     await new Promise<void>((resolve, reject) => {
       ffmpeg()
-        .input(listPath)
+        .input(listPathV)
         .inputOptions(["-f", "concat", "-safe", "0"])
         .outputOptions(["-c", "copy"])
-        .output(fullVerticalPath)
+        .output(rawVideoPath)
         .on("end", () => resolve())
         .on("error", reject)
         .run();
     });
-    cleanup.push(fullVerticalPath);
 
+    // 3. Write each audio buffer to temp file and concat
+    const audioPaths: string[] = [];
+    for (let i = 0; i < sceneAudioBuffers.length; i++) {
+      const buf = sceneAudioBuffers[i] && sceneAudioBuffers[i].length > 0
+        ? sceneAudioBuffers[i]
+        : Buffer.alloc(0);
+      if (buf.length > 0) {
+        const ap = addCleanup(join(tmpdir(), `${randomUUID()}-a${i}.mp3`));
+        await writeFile(ap, buf);
+        audioPaths.push(ap);
+      }
+    }
+
+    let rawAudioPath: string | null = null;
+    if (audioPaths.length > 0) {
+      const listPathA = addCleanup(join(tmpdir(), `${randomUUID()}-alist.txt`));
+      const listContentA = audioPaths
+        .map((p) => `file '${p.replace(/'/g, "'\\''")}'`)
+        .join("\n");
+      await writeFile(listPathA, listContentA);
+      rawAudioPath = addCleanup(join(tmpdir(), `${randomUUID()}-raw-audio.mp3`));
+      await new Promise<void>((resolve, reject) => {
+        ffmpeg()
+          .input(listPathA)
+          .inputOptions(["-f", "concat", "-safe", "0"])
+          .outputOptions(["-c", "copy"])
+          .output(rawAudioPath!)
+          .on("end", () => resolve())
+          .on("error", reject)
+          .run();
+      });
+    }
+
+    // 4. Mux concatenated video + audio, scale to vertical 1080x1920
+    const fullVerticalPath = addCleanup(join(tmpdir(), `${randomUUID()}-full-vertical.mp4`));
+    const scaleFilter = `scale=${VERTICAL_W}:${VERTICAL_H}:force_original_aspect_ratio=decrease,pad=${VERTICAL_W}:${VERTICAL_H}:(ow-iw)/2:(oh-ih)/2`;
+    if (rawAudioPath) {
+      await new Promise<void>((resolve, reject) => {
+        ffmpeg(rawVideoPath)
+          .input(rawAudioPath)
+          .outputOptions([
+            "-vf",
+            scaleFilter,
+            "-c:a",
+            "aac",
+            "-shortest",
+          ])
+          .output(fullVerticalPath)
+          .on("end", () => resolve())
+          .on("error", reject)
+          .run();
+      });
+    } else {
+      await new Promise<void>((resolve, reject) => {
+        ffmpeg(rawVideoPath)
+          .outputOptions(["-vf", scaleFilter, "-c:v", "libx264", "-preset", "fast"])
+          .output(fullVerticalPath)
+          .on("end", () => resolve())
+          .on("error", reject)
+          .run();
+      });
+    }
+
+    // 5. Optional watermark on vertical
     let verticalBuffer: Buffer;
     if (applyWatermark) {
-      const verticalOutPath = addCleanup(bufferToTempPath() + "-vertical-wm.mp4");
+      const verticalWmPath = addCleanup(join(tmpdir(), `${randomUUID()}-vertical-wm.mp4`));
       await new Promise<void>((resolve, reject) => {
         ffmpeg(fullVerticalPath)
           .outputOptions([
@@ -259,22 +175,23 @@ export async function assembleFullEpisode(
             "-c:a",
             "copy",
           ])
-          .output(verticalOutPath)
+          .output(verticalWmPath)
           .on("end", () => resolve())
           .on("error", reject)
           .run();
       });
-      verticalBuffer = await readFile(verticalOutPath);
+      verticalBuffer = await readFile(verticalWmPath);
     } else {
       verticalBuffer = await readFile(fullVerticalPath);
     }
 
-    const fullLandscapePath = join(tmpdir(), `${randomUUID()}-full-landscape.mp4`);
+    // 6. Landscape version (scale from vertical)
+    const fullLandscapePath = addCleanup(join(tmpdir(), `${randomUUID()}-full-landscape.mp4`));
     await new Promise<void>((resolve, reject) => {
       ffmpeg(fullVerticalPath)
         .outputOptions([
           "-vf",
-          `scale=${1920}:${1080}:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2`,
+          "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2",
           "-c:a",
           "copy",
         ])
@@ -283,11 +200,10 @@ export async function assembleFullEpisode(
         .on("error", reject)
         .run();
     });
-    cleanup.push(fullLandscapePath);
 
     let landscapeBuffer: Buffer;
     if (applyWatermark) {
-      const landscapeOutPath = addCleanup(bufferToTempPath() + "-landscape-wm.mp4");
+      const landscapeWmPath = addCleanup(join(tmpdir(), `${randomUUID()}-landscape-wm.mp4`));
       await new Promise<void>((resolve, reject) => {
         ffmpeg(fullLandscapePath)
           .outputOptions([
@@ -296,20 +212,20 @@ export async function assembleFullEpisode(
             "-c:a",
             "copy",
           ])
-          .output(landscapeOutPath)
+          .output(landscapeWmPath)
           .on("end", () => resolve())
           .on("error", reject)
           .run();
       });
-      landscapeBuffer = await readFile(landscapeOutPath);
+      landscapeBuffer = await readFile(landscapeWmPath);
     } else {
       landscapeBuffer = await readFile(fullLandscapePath);
     }
 
-    const thumbSourcePath = scenePaths.length >= 2 ? scenePaths[1] : scenePaths[0];
-    const thumbPath = join(tmpdir(), `${randomUUID()}-thumb.jpg`);
+    // 7. Thumbnail = first frame of vertical
+    const thumbPath = addCleanup(join(tmpdir(), `${randomUUID()}-thumb.jpg`));
     await new Promise<void>((resolve, reject) => {
-      ffmpeg(thumbSourcePath)
+      ffmpeg(fullVerticalPath)
         .outputOptions(["-vframes", "1", "-q:v", "2"])
         .output(thumbPath)
         .on("end", () => resolve())
@@ -317,7 +233,6 @@ export async function assembleFullEpisode(
         .run();
     });
     const thumbnailBuffer = await readFile(thumbPath);
-    cleanup.push(thumbPath);
 
     return { verticalBuffer, landscapeBuffer, thumbnailBuffer };
   } finally {

@@ -86,7 +86,7 @@ export default async function DashboardLayout({
           </nav>
           <div className="border-t border-border px-3 pt-4">
             <div className="flex items-center gap-3 rounded-lg px-3 py-2">
-              <UserButton afterSignOutUrl="/" />
+              <UserButton />
               <span className="text-sm text-muted-foreground">Account</span>
             </div>
           </div>
@@ -115,7 +115,7 @@ export default async function DashboardLayout({
               <Link href="/dashboard/settings">Settings</Link>
             </Button>
           </nav>
-          <UserButton afterSignOutUrl="/" />
+          <UserButton />
         </header>
         <main className="flex-1 p-4 md:p-6">{children}</main>
       </div>

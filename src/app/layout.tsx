@@ -42,7 +42,7 @@ export default function RootLayout({
     </html>
   );
   return hasClerk ? (
-    <ClerkProvider>
+    <ClerkProvider afterSignOutUrl="/">
       {content}
     </ClerkProvider>
   ) : (
