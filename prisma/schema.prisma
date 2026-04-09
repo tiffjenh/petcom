@@ -33,17 +33,18 @@ model PushSubscription {
 }
 
 model Household {
-  id          String       @id @default(cuid())
-  showTitle   String       // e.g. "Life with Biscuit"
-  showStyle   String[]     // e.g. ["The Office", "Parks and Rec"]
-  comedyNotes String?      // user free-text about their vibe
-  ownerName   String?      // your name (the co-star) for script context
-  userId      String       @unique
-  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  dogs        Dog[]
-  castMembers CastMember[]
-  episodes    Episode[]
-  createdAt   DateTime     @default(now())
+  id             String       @id @default(cuid())
+  showTitle      String       // e.g. "Life with Biscuit"
+  showStyle      String[]     // e.g. ["The Office", "Parks and Rec"]
+  comedyNotes   String?      // user free-text about their vibe
+  ownerName     String?      // your name (the co-star) for script context
+  locationPhotos Json?      // { living_room: string[], backyard: string[], kitchen: string[], bedroom: string[], favorite_spot: string[] }
+  userId         String       @unique
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  dogs           Dog[]
+  castMembers    CastMember[]
+  episodes       Episode[]
+  createdAt      DateTime     @default(now())
 }
 
 model Dog {
@@ -52,13 +53,17 @@ model Dog {
   breed                String?
   personality          String[]  // e.g. ["chaotic", "foodie", "dramatic"]
   characterBio         String?   // free-text quirks & behavior for script
-  photoUrl             String
-  animatedAvatar       String?   // generated Pixar-style avatar URL
+  photoUrl             String    // primary/first photo (backward compat; sync with photoUrls[0])
+  photoUrls            String[]  @default([]) // up to N reference photos for animation
+  wardrobeItems        Json?     // [{ label: string, photoUrls: string[] }] up to 3 photos each
+  animatedAvatar       String?   // generated Pixar-style avatar URL (primary)
+  animatedAvatarAlt    String?   // backup/alternative avatar from same generation (num_images: 2)
   loraId               String?   // Astria tune_id for LoRA (trained from dog photos)
   avatarRegenCount     Int       @default(0) // total regenerations (free: 3 max)
   avatarRegenMonth     String?   // "YYYY-MM" for Pro monthly count
   avatarRegenCountInMonth Int    @default(0) // Pro: regenerations this month
-  voiceId              String?   // ElevenLabs voice ID (assigned after first generation)
+  voiceId              String?   // ElevenLabs voice ID (legacy; prefer voiceArchetype)
+  voiceArchetype       String?   // "professional" | "chaos" | "sweetheart" | etc. (auto-assigned from personality)
   householdId          String
   household            Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
   createdAt            DateTime  @default(now())
@@ -67,9 +72,11 @@ model Dog {
 model CastMember {
   id                   String    @id @default(cuid())
   name                 String
-  role                 String    // e.g. "Owner", "Roommate", "Kid", "Partner"
-  photoUrl             String
+  role                 String    // owner_1 | owner_2 | pet_2 | pet_3
+  photoUrl             String?   // primary (backward compat; sync with photoUrls[0])
+  photoUrls            String[]  @default([]) // up to 3 reference photos
   animatedAvatar       String?
+  avatarStatus         String?   @default("none") // none | pending | generating | ready | failed
   avatarRegenCount     Int       @default(0)
   avatarRegenMonth     String?
   avatarRegenCountInMonth Int    @default(0)

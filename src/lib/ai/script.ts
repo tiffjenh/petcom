@@ -12,19 +12,37 @@ function getClient() {
   return new Anthropic({ apiKey: key });
 }
 
+/** Who is speaking for TTS voice cast (maps to ElevenLabs voice IDs). */
+export type SpeakerRole =
+  | "narrator"
+  | "dog_main"
+  | "dog_large"
+  | "dog_small"
+  | "dog_husky"
+  | "owner";
+
 export type ScriptDialogueLine = {
   character: string;
   line: string;
   isThoughtBubble: boolean;
+  /** Voice cast role for this line (defaults to narrator if omitted). */
+  speakerRole?: SpeakerRole;
 };
 
 export type ScriptScene = {
   sceneNumber: number;
   setting: string;
-  type: "normal" | "confessional" | "montage" | "inner_monologue";
+  type: "normal" | "action" | "confessional" | "montage" | "inner_monologue";
   characters: string[];
   action: string;
-  dialogue: ScriptDialogueLine[];
+  /** What the narrator says for this scene (director prompt output). When present, TTS uses this instead of dialogue. */
+  narratorLine?: string;
+  /** Who is speaking for this scene when using narratorLine (drives voice cast). */
+  speakerRole?: SpeakerRole;
+  /** Optional: true when type is "confessional". Kept for exact script compatibility. */
+  isConfessional?: boolean;
+  /** Per-line dialogue for multi-speaker scenes (owner + dog, etc.). Each line can have speakerRole. */
+  dialogue?: ScriptDialogueLine[];
 };
 
 export type EpisodeScriptJson = {
@@ -186,7 +204,8 @@ export function scriptToText(script: EpisodeScriptJson): string {
   const parts: string[] = [];
   for (const scene of script.scenes) {
     parts.push(`Scene ${scene.sceneNumber}: ${scene.setting}. ${scene.action}`);
-    for (const d of scene.dialogue) {
+    if (scene.narratorLine) parts.push(`Narrator: ${scene.narratorLine}`);
+    for (const d of scene.dialogue ?? []) {
       if (d.isThoughtBubble) {
         parts.push(`(Thought: ${d.line})`);
       } else {

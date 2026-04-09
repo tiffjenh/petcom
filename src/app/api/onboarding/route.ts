@@ -37,8 +37,8 @@ export async function POST(req: Request) {
       castMembers?: CastInput[];
     };
 
-    const validDogs = (dogs ?? []).filter((d) => d.name && d.photoUrl).slice(0, limits.maxDogs);
-    const validCast = (castMembers ?? []).filter((c) => c.name && c.photoUrl).slice(0, limits.maxCastMembers);
+    const validDogs = (dogs ?? []).filter((d) => d.name && (d.photoUrl || (d as { photoUrls?: string[] }).photoUrls?.length)).slice(0, limits.maxDogs);
+    const validCast = (castMembers ?? []).filter((c) => c.name && (c.photoUrl || (c as { photoUrls?: string[] }).photoUrls?.length)).slice(0, limits.maxCastMembers);
     const stylePicks = (showStyle ?? []).slice(0, limits.maxComedyStylePicks);
 
     const household = await prisma.household.upsert({
@@ -64,6 +64,8 @@ export async function POST(req: Request) {
     const createdDogs: { id: string; name: string; photoUrl: string }[] = [];
     if (validDogs.length) {
       for (const d of validDogs) {
+        const dogPhotoUrls = (d as { photoUrls?: string[] }).photoUrls ?? (d.photoUrl ? [d.photoUrl] : []);
+        const primaryPhoto = dogPhotoUrls[0] ?? d.photoUrl;
         const dog = await prisma.dog.create({
           data: {
             householdId: household.id,
@@ -71,7 +73,8 @@ export async function POST(req: Request) {
             breed: d.breed || null,
             personality: d.personality ?? [],
             characterBio: d.characterBio?.trim() || null,
-            photoUrl: d.photoUrl,
+            photoUrl: primaryPhoto,
+            photoUrls: dogPhotoUrls,
           },
         });
         createdDogs.push({ id: dog.id, name: dog.name, photoUrl: dog.photoUrl });
@@ -80,12 +83,15 @@ export async function POST(req: Request) {
 
     if (validCast.length) {
       for (const c of validCast) {
+        const castPhotoUrls = (c as { photoUrls?: string[] }).photoUrls ?? (c.photoUrl ? [c.photoUrl] : []);
+        const primaryPhoto = castPhotoUrls[0] ?? c.photoUrl ?? null;
         await prisma.castMember.create({
           data: {
             householdId: household.id,
             name: c.name,
             role: c.role || "Owner",
-            photoUrl: c.photoUrl,
+            photoUrl: primaryPhoto,
+            photoUrls: castPhotoUrls,
           },
         });
       }

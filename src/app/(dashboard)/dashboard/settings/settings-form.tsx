@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,7 +10,18 @@ import { useToast } from "@/components/ui/use-toast";
 import { Loader2, AlertTriangle } from "lucide-react";
 import type { Household } from "@prisma/client";
 import { PushSubscribeButton } from "@/components/push-subscribe-button";
-import { COMEDY_SHOW_OPTIONS } from "@/components/onboarding/StepComedyStyle";
+import { HUMOR_CATEGORY_TO_SHOW_IDS, COMEDY_SHOW_NAME_TO_CATEGORY } from "@/lib/prompts/scriptPrompt";
+import { SettingsPhotosSection } from "./settings-photos-section";
+
+/** Same 6 humor styles as onboarding. id is saved to household.showStyle. */
+const HUMOR_STYLE_OPTIONS = [
+  { id: "mockumentary", label: "Mockumentary", subtitle: "The Office, Modern Family, Abbott Elementary" },
+  { id: "chaotic_comedy", label: "Chaotic & Absurd", subtitle: "It's Always Sunny, Arrested Development" },
+  { id: "wholesome", label: "Wholesome & Heartfelt", subtitle: "Schitt's Creek, Ted Lasso" },
+  { id: "dry_wit", label: "Dry & Deadpan", subtitle: "Seinfeld, Curb Your Enthusiasm" },
+  { id: "sitcom_classic", label: "Classic Sitcom", subtitle: "Friends, How I Met Your Mother, New Girl" },
+  { id: "reality_tv", label: "Reality TV Drama", subtitle: "The Real Housewives, Love Island" },
+] as const;
 
 const NOTIFICATION_TIMES = [
   { value: "", label: "When episode is ready" },
@@ -37,18 +48,54 @@ export function SettingsForm({
   const router = useRouter();
   const { toast } = useToast();
   const [loading, setLoading] = useState(false);
+  const [comedySaving, setComedySaving] = useState(false);
   const [showTitle, setShowTitle] = useState(household?.showTitle ?? "");
-  const [showStyle, setShowStyle] = useState<string[]>(household?.showStyle ?? []);
+  const showStyleInitial = useMemo(() => {
+    const raw = household?.showStyle ?? [];
+    const categoryIds = new Set<string>(Object.keys(HUMOR_CATEGORY_TO_SHOW_IDS));
+    return raw.map((s) => (categoryIds.has(s) ? s : COMEDY_SHOW_NAME_TO_CATEGORY[s])).filter(Boolean) as string[];
+  }, [household?.showStyle]);
+  const [showStyle, setShowStyle] = useState<string[]>(showStyleInitial);
+
+  useEffect(() => {
+    const raw = household?.showStyle ?? [];
+    const categoryIds = new Set<string>(Object.keys(HUMOR_CATEGORY_TO_SHOW_IDS));
+    const mapped = raw.map((s) => (categoryIds.has(s) ? s : COMEDY_SHOW_NAME_TO_CATEGORY[s])).filter(Boolean) as string[];
+    setShowStyle(mapped);
+  }, [household?.showStyle]);
+
   const [comedyNotes, setComedyNotes] = useState(household?.comedyNotes ?? "");
   const [emailNotifications, setEmailNotifications] = useState(notificationEmail);
   const [pushNotifications, setPushNotifications] = useState(notificationPush);
   const [notificationTimePref, setNotificationTimePref] = useState(notificationTime);
   const [deleteConfirm, setDeleteConfirm] = useState("");
 
-  const toggleShowStyle = (s: string) => {
-    setShowStyle((prev) =>
-      prev.includes(s) ? prev.filter((x) => x !== s) : prev.length < maxComedyPicks ? [...prev, s] : prev
-    );
+  const saveComedyStyle = async (nextStyle: string[]) => {
+    setComedySaving(true);
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ showStyle: nextStyle }),
+      });
+      if (!res.ok) throw new Error("Failed to save");
+      toast({ title: "Comedy style saved" });
+      router.refresh();
+    } catch {
+      toast({ title: "Failed to save comedy style", variant: "destructive" });
+    } finally {
+      setComedySaving(false);
+    }
+  };
+
+  const toggleShowStyle = (id: string) => {
+    const next = showStyle.includes(id)
+      ? showStyle.filter((x) => x !== id)
+      : showStyle.length < maxComedyPicks
+        ? [...showStyle, id]
+        : showStyle;
+    setShowStyle(next);
+    saveComedyStyle(next);
   };
 
   const save = async () => {
@@ -95,26 +142,39 @@ export function SettingsForm({
       <Card>
         <CardHeader>
           <CardTitle>Comedy style</CardTitle>
-          <CardDescription>Pick {maxComedyPicks === 1 ? "1 show" : `1–${maxComedyPicks} shows`}. We match this vibe when writing episodes.</CardDescription>
+          <CardDescription>
+            Pick {maxComedyPicks === 1 ? "1 style" : `1–${maxComedyPicks} styles`}. Saves when you tap a card. We match this vibe when writing episodes.
+          </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-2 gap-2 md:grid-cols-3 lg:grid-cols-5">
-            {COMEDY_SHOW_OPTIONS.map((show) => (
-              <button
-                key={show.name}
-                type="button"
-                onClick={() => toggleShowStyle(show.name)}
-                className={`rounded-lg border-2 px-3 py-2 text-left text-sm font-medium transition-colors ${
-                  showStyle.includes(show.name) ? "border-primary bg-primary/10" : "border-border hover:bg-muted"
-                }`}
-              >
-                <span className="mr-1">{show.emoji}</span>
-                {show.name}
-              </button>
-            ))}
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            {HUMOR_STYLE_OPTIONS.map((style) => {
+              const selected = showStyle.includes(style.id);
+              return (
+                <button
+                  key={style.id}
+                  type="button"
+                  onClick={() => toggleShowStyle(style.id)}
+                  disabled={comedySaving}
+                  className={`rounded-xl border-2 p-4 text-left transition-all hover:border-primary/50 hover:bg-muted/50 disabled:opacity-60 ${
+                    selected ? "border-primary bg-primary/10 ring-2 ring-primary ring-offset-2" : "border-border bg-card"
+                  }`}
+                >
+                  <span className="font-semibold">{style.label}</span>
+                  <span className="mt-1 block text-sm text-muted-foreground">{style.subtitle}</span>
+                </button>
+              );
+            })}
           </div>
+          {comedySaving && (
+            <p className="mt-2 flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" /> Saving…
+            </p>
+          )}
         </CardContent>
       </Card>
+
+      <SettingsPhotosSection household={household} />
 
       <Card>
         <CardHeader>

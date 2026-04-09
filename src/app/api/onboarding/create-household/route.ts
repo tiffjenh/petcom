@@ -70,6 +70,7 @@ export async function POST(req: Request) {
         personality,
         characterBio: body.characterBio?.trim() || null,
         photoUrl: primaryPhotoUrl,
+        photoUrls,
       },
     });
 

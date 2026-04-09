@@ -9,7 +9,10 @@ export default async function SettingsPage() {
   if (!user) redirect("/sign-in");
 
   const [household, subscription] = await Promise.all([
-    prisma.household.findUnique({ where: { userId: user.id } }),
+    prisma.household.findUnique({
+      where: { userId: user.id },
+      include: { dogs: true, castMembers: true },
+    }),
     prisma.subscription.findUnique({ where: { userId: user.id } }),
   ]);
   const limits = getPlanLimits(subscription?.plan);
@@ -19,7 +22,7 @@ export default async function SettingsPage() {
       <div>
         <h1 className="text-2xl font-bold">Show settings</h1>
         <p className="text-muted-foreground">
-          Edit your show title, comedy style, and preferences.
+          Edit your show title, comedy style, photos, and preferences.
         </p>
       </div>
       <SettingsForm

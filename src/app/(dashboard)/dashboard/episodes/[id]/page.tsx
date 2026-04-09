@@ -21,6 +21,7 @@ function formatStructuredScript(script: Record<string, unknown>): string {
   for (const s of scenes) {
     lines.push(`\n--- Scene ${s.sceneNumber}: ${s.setting} (${s.type}) ---`);
     if (s.action) lines.push(String(s.action));
+    if ((s as { narratorLine?: string }).narratorLine) lines.push(`Narrator: ${(s as { narratorLine: string }).narratorLine}`);
     const dialogue = (s.dialogue as Array<{ character: string; line: string; isThoughtBubble?: boolean }>) ?? [];
     for (const d of dialogue) {
       lines.push(d.isThoughtBubble ? `[Thought: ${d.character}] ${d.line}` : `${d.character}: ${d.line}`);

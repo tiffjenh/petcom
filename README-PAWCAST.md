@@ -50,8 +50,8 @@
    - For local webhooks: `stripe listen --forward-to localhost:3000/api/webhooks/stripe`.
 
 7. **Inngest**
-   - Sign up at [inngest.com](https://inngest.com), create an app, and add the Inngest dev server or connect Vercel.
-   - Set `INNGEST_EVENT_KEY` and `INNGEST_SIGNING_KEY` in `.env.local`.
+   - **Local:** In `.env.local` set `INNGEST_SIGNING_KEY=local` and `INNGEST_EVENT_KEY=local`. In a separate terminal run `npm run inngest:dev` (uses `--signing-key local`).
+   - **Production:** Sign up at [inngest.com](https://inngest.com), create an app, and set `INNGEST_EVENT_KEY` and `INNGEST_SIGNING_KEY` from the dashboard.
 
 8. **Run**
    ```bash

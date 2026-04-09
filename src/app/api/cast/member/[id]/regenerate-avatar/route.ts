@@ -44,7 +44,9 @@ export async function POST(
       );
     }
 
-    const url = await generateHumanAvatar(member.photoUrl);
+    const photoUrl = member.photoUrls?.[0] ?? member.photoUrl;
+    if (!photoUrl) return NextResponse.json({ message: "No photo" }, { status: 400 });
+    const url = await generateHumanAvatar(photoUrl);
     const regenUpdate = getAvatarRegenUpdate(entity, plan);
     await prisma.castMember.update({
       where: { id },

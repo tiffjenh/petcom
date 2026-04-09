@@ -1,7 +1,359 @@
 /**
  * Comedy style instruction blocks for script generation.
- * Keys are snake_case ids; selected show names (from UI/API) are mapped to these via COMEDY_SHOW_NAME_TO_ID.
+ * Settings/onboarding can send either humor category ids (mockumentary, etc.) or legacy show names; both are resolved to prompt ids here.
+ * Script structure, scene count, and narrator voice are driven by the primary comedy category.
  */
+
+import { getComedyStyle } from "./comedy-styles";
+
+export type ComedyCategory =
+  | "mockumentary"
+  | "chaotic_comedy"
+  | "wholesome"
+  | "dry_wit"
+  | "sitcom_classic"
+  | "reality_tv";
+
+/** Voice settings per comedy style (ElevenLabs). */
+export type ComedyVoiceSettings = {
+  stability: number;
+  similarity_boost?: number;
+  style: number;
+};
+
+/** Episode format: structure, scene list, narrator rules, title format, voice. */
+export type ComedyStyleFormat = {
+  sceneCount: number;
+  structure: string;
+  scenes: string[];
+  narratorRules: string;
+  titleFormat: string;
+  voiceSettings: ComedyVoiceSettings;
+};
+
+/** V1: 4 scenes per episode, 60s total. Comedy style formats — structure, narrator rules, title format, voice. */
+export const COMEDY_STYLE_FORMATS: Record<ComedyCategory, ComedyStyleFormat> = {
+  mockumentary: {
+    sceneCount: 4,
+    structure: "Mockumentary — The Office / Modern Family style. 4 scenes alternating action/confessional.",
+    scenes: [
+      "ACTION — establishing, dog doing something confidently",
+      "CONFESSIONAL — dog addresses camera, deadpan self-analysis",
+      "ACTION — situation escalates, another character involved",
+      "CONFESSIONAL — dog's final take, completely unbothered",
+    ],
+    narratorRules: `Action scenes: dry David Attenborough documentary tone. "It is 9am. Waffles has located the treat bag." Confessional scenes: first person as the dog, delusional confidence. "I had a plan. I always have a plan." Dramatic pauses with "...". Treat mundane events as historically significant. Title format: 'A Squirrel. A Promise. A Betrayal.'`,
+    titleFormat: "'A Squirrel. A Promise. A Betrayal.' or 'The Treaty of the Back Yard'",
+    voiceSettings: { stability: 0.25, similarity_boost: 0.85, style: 0.75 },
+  },
+  chaotic_comedy: {
+    sceneCount: 4,
+    structure: "Pure escalation — each scene worse than last. 4 scenes.",
+    scenes: [
+      "ACTION — innocent start, dog has simple goal",
+      "ACTION — first thing goes wrong, dog undeterred",
+      "ACTION — chaos peaks",
+      "ACTION — absurd resolution, dog acts like nothing happened",
+    ],
+    narratorRules: `Narrator starts calm, gets increasingly alarmed. No confessionals — pure action. End on absurd resolution everyone just accepts.`,
+    titleFormat: "'Operation: Backyard' or 'The Tuesday Incident'",
+    voiceSettings: { stability: 0.2, similarity_boost: 0.8, style: 0.9 },
+  },
+  wholesome: {
+    sceneCount: 4,
+    structure: "Gentle arc. 4 scenes with heartfelt moment.",
+    scenes: [
+      "ACTION — cozy establishing, dog in their element",
+      "ACTION — small challenge disrupts the peace",
+      "HEARTFELT — quiet moment of connection",
+      "ACTION — warm ending, everything right",
+    ],
+    narratorRules: `Warm, fond, slightly amused. Never cynical. End on something that makes you go 'aww'.`,
+    titleFormat: "'A Good Tuesday' or 'The Best Part of the Day'",
+    voiceSettings: { stability: 0.6, similarity_boost: 0.8, style: 0.4 },
+  },
+  dry_wit: {
+    sceneCount: 4,
+    structure: "Observational — small moments, disproportionate reactions. 4 scenes.",
+    scenes: [
+      "ACTION — dog encounters minor inconvenience, treats as outrage",
+      "CONFESSIONAL — completely disproportionate take",
+      "ACTION — resolves itself without dog's help",
+      "CONFESSIONAL — dog takes full credit",
+    ],
+    narratorRules: `Completely flat delivery. "Waffles noticed the leaf. She had thoughts about the leaf." Never explains the joke. Just states it.`,
+    titleFormat: "'The Leaf' or 'Tuesday' or 'An Incident Involving the Couch'",
+    voiceSettings: { stability: 0.5, similarity_boost: 0.8, style: 0.2 },
+  },
+  sitcom_classic: {
+    sceneCount: 4,
+    structure: "3 act — setup / misunderstanding / resolution. 4 scenes.",
+    scenes: [
+      "ACTION — setup: dog wants something, clear goal",
+      "ACTION — complication: misunderstanding makes it harder",
+      "ACTION — resolution: solved, usually accidentally",
+      "ACTION — tag: short funny button",
+    ],
+    narratorRules: `Warm and energetic. Clear setup/punchline per scene. Feels like laugh track after key moments.`,
+    titleFormat: "'The One With the Ball' or 'No Good Very Bad Walk'",
+    voiceSettings: { stability: 0.4, similarity_boost: 0.8, style: 0.6 },
+  },
+  reality_tv: {
+    sceneCount: 4,
+    structure: "Drama arc with villain edit and confessionals. 4 scenes.",
+    scenes: [
+      "CONFESSIONAL — dog introduces themselves and their agenda",
+      "ACTION — dog executes plan with suspicious confidence",
+      "CONFESSIONAL — dramatic reaction",
+      "ACTION — winner takes all",
+    ],
+    narratorRules: `"Previously on Life with Waffles..." Everything framed as betrayal or triumph. End with cliffhanger.`,
+    titleFormat: "'Betrayal at the Dog Park' or 'The Ball Incident: A Reckoning'",
+    voiceSettings: { stability: 0.2, similarity_boost: 0.8, style: 0.8 },
+  },
+};
+
+/** Humor category id → show ids (for resolving legacy show names). */
+export const HUMOR_CATEGORY_TO_SHOW_IDS: Record<string, string[]> = {
+  mockumentary: ["the_office", "modern_family", "abbott_elementary"],
+  chaotic_comedy: ["its_always_sunny", "arrested_development"],
+  wholesome: ["schitts_creek", "parks_and_recreation"],
+  dry_wit: ["seinfeld", "curb_your_enthusiasm"],
+  sitcom_classic: ["friends", "how_i_met_your_mother", "new_girl"],
+  reality_tv: ["reality_tv"],
+};
+
+/** V1: 4 scenes per episode. */
+export const SCENE_COUNT_BY_STYLE: Record<ComedyCategory, number> = {
+  mockumentary: 4,
+  chaotic_comedy: 4,
+  wholesome: 4,
+  dry_wit: 4,
+  sitcom_classic: 4,
+  reality_tv: 4,
+};
+
+/** V1 ElevenLabs voice settings per comedy style. */
+export const NARRATOR_VOICE_SETTINGS_BY_STYLE: Record<
+  ComedyCategory,
+  { stability: number; style: number; similarity_boost?: number }
+> = {
+  mockumentary: { stability: 0.25, similarity_boost: 0.85, style: 0.75 },
+  chaotic_comedy: { stability: 0.2, similarity_boost: 0.8, style: 0.9 },
+  wholesome: { stability: 0.6, similarity_boost: 0.8, style: 0.4 },
+  dry_wit: { stability: 0.5, similarity_boost: 0.8, style: 0.2 },
+  sitcom_classic: { stability: 0.4, similarity_boost: 0.8, style: 0.6 },
+  reality_tv: { stability: 0.2, similarity_boost: 0.8, style: 0.8 },
+};
+
+/** Show id → category (for resolving e.g. "the_office" → mockumentary). */
+const SHOW_ID_TO_CATEGORY: Record<string, ComedyCategory> = (() => {
+  const out: Record<string, ComedyCategory> = {};
+  for (const [cat, ids] of Object.entries(HUMOR_CATEGORY_TO_SHOW_IDS)) {
+    for (const id of ids) {
+      out[id] = cat as ComedyCategory;
+    }
+  }
+  return out;
+})();
+
+/** Resolve show names/ids to a single primary comedy category (first match). */
+export function getPrimaryComedyCategory(
+  selectedShowNamesOrIds: string[]
+): ComedyCategory | null {
+  if (!selectedShowNamesOrIds?.length) return null;
+  for (const item of selectedShowNamesOrIds) {
+    const trimmed = item.trim();
+    const key = trimmed.toLowerCase();
+    if (key in SCENE_COUNT_BY_STYLE) return key as ComedyCategory;
+    const category = COMEDY_SHOW_NAME_TO_CATEGORY[trimmed];
+    if (category) return category as ComedyCategory;
+    const showId = COMEDY_SHOW_NAME_TO_ID[trimmed] ?? key;
+    if (SHOW_ID_TO_CATEGORY[showId]) return SHOW_ID_TO_CATEGORY[showId];
+  }
+  return null;
+}
+
+export function getComedyFormat(category: ComedyCategory | null): ComedyStyleFormat | null {
+  if (!category || !(category in COMEDY_STYLE_FORMATS)) return null;
+  return COMEDY_STYLE_FORMATS[category as ComedyCategory];
+}
+
+export function getSceneCountForStyle(category: ComedyCategory | null): number {
+  const format = getComedyFormat(category);
+  return format?.sceneCount ?? 4;
+}
+
+export function getNarratorVoiceSettingsForStyle(
+  category: ComedyCategory | null
+): { stability: number; style: number; similarity_boost?: number } | null {
+  const format = getComedyFormat(category);
+  if (!format?.voiceSettings) return null;
+  return {
+    stability: format.voiceSettings.stability,
+    style: format.voiceSettings.style,
+    ...(format.voiceSettings.similarity_boost !== undefined && {
+      similarity_boost: format.voiceSettings.similarity_boost,
+    }),
+  };
+}
+
+/** Voice settings from comedy-styles (used when pipeline is driven by humorStyles[0]). */
+export function getNarratorVoiceSettingsFromStyleId(styleId: string): {
+  stability: number;
+  style: number;
+  similarity_boost: number;
+} {
+  const style = getComedyStyle(styleId);
+  return {
+    stability: style.voiceSettings.stability,
+    style: style.voiceSettings.style,
+    similarity_boost: 0.85,
+  };
+}
+
+/** Build the comedy-style-driven prompt block for script generation. */
+export function getComedyStylePromptBlock(
+  styleId: string,
+  dog: {
+    name: string;
+    breed: string | null;
+    personality?: string[];
+    characterBio?: string | null;
+    voiceArchetype?: string | null;
+  },
+  household: { showTitle: string; humorStyles?: string[]; showStyle?: string[] },
+  castMembers: { name: string; role: string }[],
+  options?: { sceneCount?: number }
+): string {
+  const style = getComedyStyle(styleId);
+  const sceneCount = options?.sceneCount ?? 4;
+  const is90s = sceneCount === 6;
+  const castList =
+    castMembers
+      ?.map((c) => `${c.name} (${c.role})`)
+      .join(", ") || "None";
+
+  const lengthInstruction = is90s
+    ? "Generate 6 scenes. Each scene's dialogue should total 15 seconds when spoken (2-3 lines × 5 seconds each). 6 scenes × 15 seconds = 90 seconds total. No hardcoded plot — generate everything from the dog's bio and personality."
+    : "4 scenes. Each scene's dialogue ~15 seconds when spoken. 4 scenes × 15s = 60 seconds total.";
+
+  const structureScenes = is90s
+    ? [
+        ...style.structure.map((s, i) => ({ ...s, sceneIndex: i })),
+        { sceneIndex: 4, type: "action", description: "Escalation or twist. Same comedy style.", hasConfessional: style.structure[2]?.hasConfessional ?? false, cameraStyle: style.structure[2]?.cameraStyle ?? "wide", dialogueStyle: style.structure[2]?.dialogueStyle ?? "short punchy lines" },
+        { sceneIndex: 5, type: style.structure[3]?.type ?? "confessional", description: "Final beat. Same comedy style.", hasConfessional: style.structure[3]?.hasConfessional ?? true, cameraStyle: style.structure[3]?.cameraStyle ?? "close-up", dialogueStyle: style.structure[3]?.dialogueStyle ?? "direct to camera" },
+      ]
+    : style.structure.map((s, i) => ({ ...s, sceneIndex: i }));
+
+  return `
+You are writing a ${is90s ? "90-second" : "60-second"} episode of "${household.showTitle}" 
+for a ${dog.breed ?? "dog"} named ${dog.name}.
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+COMEDY STYLE: ${style.label}
+Reference shows: ${style.reference}
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+LENGTH: ${lengthInstruction}
+
+EPISODE STRUCTURE — follow this EXACTLY:
+${structureScenes
+  .map(
+    (s: { type: string; description: string; cameraStyle: string; dialogueStyle: string; hasConfessional: boolean }, i: number) => `
+Scene ${i + 1}: ${s.type.toUpperCase()}
+Description: ${s.description}
+Camera style: ${s.cameraStyle}
+Dialogue style: ${s.dialogueStyle}
+Has confessional: ${s.hasConfessional}
+`
+  )
+  .join("\n")}
+
+DIALOGUE RULES:
+${style.dialogueRules}
+
+EPISODE TITLE FORMAT:
+${style.episodeTitleFormat}
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+CHARACTER MATERIAL — USE THIS:
+━━━━━━━━━━━━━━━━━━━━━━━━
+Dog name: ${dog.name}
+Breed: ${dog.breed ?? "dog"}
+Owner description: ${dog.characterBio ?? "(use personality only)"}
+Personality: ${dog.personality?.join(", ") ?? ""}
+Voice archetype: ${dog.voiceArchetype ?? "professional"}
+
+Mine this for comedy:
+- Central obsession → episode's main object/goal
+- Biggest contradiction → comedic tension
+- Weird specific behavior → recurring bit
+
+RULE 1: Use at least 2 specific details from the owner's 
+description. Owner should watch and say 
+"that is EXACTLY what she does."
+
+RULE 2: Every episode needs at least 1 other character. Supporting cast: ${castList}
+
+RULE 3: Each dialogue line must be 1-3 sentences MAX.
+This is non-negotiable — clips are 3-5 seconds long.
+
+RULE 4: Write all dialogue in the character's voice archetype:
+${dog.voiceArchetype ?? "professional"} speaking style applies to ${dog.name}.
+Supporting characters get auto-assigned archetypes (chill, chaos, philosopher, etc.).
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+OUTPUT — JSON ONLY, NO OTHER TEXT:
+━━━━━━━━━━━━━━━━━━━━━━━━
+{
+  "episodeTitle": string,
+  "synopsis": string,
+  "situation": string,
+  "category": string,
+  "setting": string,
+  "plotDevice": string,
+  "tags": string[],
+  "scenes": [
+    {
+      "sceneNumber": number,
+      "type": string,
+      "setting": string,
+      "action": string,
+      "isConfessional": boolean,
+      "cameraStyle": string,
+      "dialogueLines": [
+        {
+          "speaker": string,
+          "voiceArchetype": string,
+          "line": string,
+          "clipIndex": number
+        }
+      ]
+    }
+  ]
+}
+`;
+}
+
+/** Legacy: show name → humor category id (for mapping old showStyle to category selection in Settings). */
+export const COMEDY_SHOW_NAME_TO_CATEGORY: Record<string, string> = {
+  "The Office": "mockumentary",
+  "Modern Family": "mockumentary",
+  "Abbott Elementary": "mockumentary",
+  "Brooklyn Nine-Nine": "chaotic_comedy",
+  "It's Always Sunny": "chaotic_comedy",
+  "Arrested Development": "chaotic_comedy",
+  "Schitt's Creek": "wholesome",
+  "Ted Lasso": "wholesome",
+  "Parks and Recreation": "wholesome",
+  "What We Do in the Shadows": "dry_wit",
+  "Seinfeld": "dry_wit",
+  "Curb Your Enthusiasm": "dry_wit",
+  "Friends": "sitcom_classic",
+  "How I Met Your Mother": "sitcom_classic",
+  "New Girl": "sitcom_classic",
+};
 
 export const COMEDY_SHOW_NAME_TO_ID: Record<string, string> = {
   "The Office": "the_office",
@@ -171,6 +523,15 @@ export const COMEDY_STYLE_INSTRUCTIONS: Record<string, string> = {
   - The inner monologue should sound exasperated and incredulous: "Can you BELIEVE this?"
   - No clean resolution — ends on maximum awkwardness
 `,
+
+  reality_tv: `
+  - Confessionals to camera as if the dog is on a reality show
+  - The dog has strong opinions about the "other cast members" (humans, other pets)
+  - Dramatic reaction shots; the dog judges everyone silently
+  - Over-the-top stakes for trivial things (who gets the best spot on the couch)
+  - Optional "villain edit" energy — the dog is unapologetically self-centered
+  - Reality TV pacing: quick cuts, reaction shots, confessional asides
+`,
 };
 
 const BLEND_NOTE = `
@@ -183,40 +544,40 @@ Note: Blend observational grievance comedy with social awkwardness escalation �
 `;
 
 /**
- * Build the comedy style instructions block for the script prompt.
- * @param selectedShowNames - Display names from UI/API (e.g. "The Office", "Seinfeld")
- * @returns Multiline string to inject into the system prompt, or empty string if none selected
+ * Build the comedy style / episode format block from COMEDY_STYLE_FORMATS.
+ * Uses primary category from selectedShowNamesOrIds (e.g. household.showStyle or humorStyles).
  */
-export function getComedyStyleBlock(selectedShowNames: string[]): string {
-  if (!selectedShowNames?.length) return "";
+export function getComedyStyleBlock(selectedShowNamesOrIds: string[]): string {
+  const input = selectedShowNamesOrIds ?? [];
+  const primary = getPrimaryComedyCategory(input);
+  const format = getComedyFormat(primary);
+  const sceneCount = getSceneCountForStyle(primary);
+  console.log("[getComedyStyleBlock] primary:", primary, "sceneCount:", sceneCount);
 
-  const ids = selectedShowNames
-    .map((name) => COMEDY_SHOW_NAME_TO_ID[name.trim()])
-    .filter(Boolean) as string[];
-  if (ids.length === 0) return "";
-
-  const hasSeinfeld = ids.includes("seinfeld");
-  const hasCurb = ids.includes("curb_your_enthusiasm");
-  const blendSeinfeldCurb = hasSeinfeld && hasCurb;
-
-  const blocks = ids
-    .map((id) => COMEDY_STYLE_INSTRUCTIONS[id])
-    .filter(Boolean)
-    .map((block) => block.trim());
-
-  if (blocks.length === 0) return "";
-
-  const parts: string[] = [];
-
-  if (blendSeinfeldCurb) {
-    parts.push(SEINFELD_CURB_BLEND.trim());
+  if (!format) {
+    const fallback = COMEDY_STYLE_FORMATS.mockumentary;
+    return [
+      "EPISODE FORMAT:",
+      `Scene count: ${fallback.sceneCount}. Structure: ${fallback.structure}.`,
+      "Scenes:",
+      ...fallback.scenes.map((s, i) => `  ${i + 1}. ${s}`),
+      "",
+      "NARRATOR RULES:",
+      fallback.narratorRules,
+      "",
+      `TITLE FORMAT: ${fallback.titleFormat}`,
+    ].join("\n");
   }
 
-  parts.push(...blocks);
-
-  if (ids.length > 1) {
-    parts.push(BLEND_NOTE.trim());
-  }
-
-  return `COMEDY STYLE INSTRUCTIONS (apply these to the episode):\n${parts.join("\n\n")}`;
+  return [
+    "EPISODE FORMAT:",
+    `Scene count: ${format.sceneCount}. Structure: ${format.structure}.`,
+    "Scenes:",
+    ...format.scenes.map((s, i) => `  ${i + 1}. ${s}`),
+    "",
+    "NARRATOR RULES:",
+    format.narratorRules,
+    "",
+    `TITLE FORMAT: ${format.titleFormat}`,
+  ].join("\n");
 }

@@ -1,7 +1,13 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { prisma } from "@/lib/prisma";
 import type { EpisodeScriptJson, ScriptScene } from "@/lib/ai/script";
-import { getComedyStyleBlock } from "@/lib/prompts/scriptPrompt";
+import {
+  getComedyStylePromptBlock,
+  getPrimaryComedyCategory,
+  getNarratorVoiceSettingsFromStyleId,
+} from "@/lib/prompts/scriptPrompt";
+import { getComedyStyle } from "@/lib/prompts/comedy-styles";
+import { VOICE_ARCHETYPES } from "@/lib/ai/voice-archetypes";
 
 export type EpisodeHistoryEntry = {
   situation: string;
@@ -36,13 +42,23 @@ export type DirectorScriptJson = EpisodeScriptJson & {
   tags: string[];
 };
 
+export type DogForDirector = {
+  name: string;
+  breed: string | null;
+  personality: string[];
+  characterBio: string | null;
+  bio?: string | null;
+  voiceArchetype?: string | null;
+};
+
 export type HouseholdForDirector = {
   showTitle: string;
   showStyle: string[];
+  humorStyles?: string[];
   comedyNotes: string | null;
   ownerName: string | null;
-  dogs: { name: string; breed: string | null; personality: string[]; characterBio: string | null }[];
-  castMembers: { name: string; role: string }[];
+  dogs: DogForDirector[];
+  castMembers: { name: string; role: string; animatedAvatar?: string | null }[];
 };
 
 const CATEGORIES = ["home", "outdoor", "social", "seasonal", "emotional"] as const;
@@ -231,26 +247,76 @@ function getSeasonalHint(): string | null {
   return hints[month] ?? null;
 }
 
-/** Build the full Claude system + user prompt for the episode writer. */
+/** V1: Comedy material block for script prompt — mine bio for episode goals, chip beats, active beats. */
+export function extractComedyMaterial(dog: DogForDirector): string {
+  const bio = (dog as { bio?: string | null }).bio || dog.characterBio || "";
+  const personality = dog.personality ?? [];
+  return `COMEDY MATERIAL FOR ${dog.name} — READ CAREFULLY:
+Owner's description: ${bio}
+Personality chips: ${personality.join(", ")}
+
+Mine this bio for:
+- What does this dog obsess over? → episode's central object/goal
+- What is their biggest contradiction? → comedic tension
+- What can they never have/achieve? → throughline
+- What do they do that's weird/funny? → recurring bit
+
+CHIP COMEDY BEATS:
+needy: follows owner everywhere, acts like coincidence
+anxious: catastrophizes minor things
+cuddly: solves everything with physical contact
+sweet: good intentions that backfire
+fierce: intimidating about non-threatening things
+chaotic: accidentally escalates everything
+foodie: all decisions food-motivated, denies it
+clingy: cannot be in different room, elaborate justifications
+lazy: extraordinary effort to avoid effort
+dramatic: minor inconveniences = Shakespearean tragedy
+sneaky: has a plan, plan is obvious to everyone else
+bossy: manages household, nobody asked
+goofy: dignified goals, chaotic execution
+independent: pretends not to need anyone, follows everyone
+vocal: has opinions, shares all of them, loudly
+
+ACTIVE BEATS: ${personality.map((p) => `${p}: apply the matching beat above`).join(", ")}`;
+}
+
+/** Build the full Claude system + user prompt for the episode writer. Fully driven by household.humorStyles[0]. */
 export function buildScriptPrompt(
   household: HouseholdForDirector,
   episodeHistory: EpisodeHistoryEntry[],
   episodeNumber: number,
-  plannedConcept?: PlannedConcept
+  plannedConcept?: PlannedConcept,
+  options?: { sceneCount?: number }
 ): { system: string; user: string } {
-  const selectedShows =
-    household.showStyle?.length > 0
-      ? household.showStyle.join(", ")
-      : "The Office, Brooklyn Nine-Nine";
-  const comedyStyleBlock = getComedyStyleBlock(household.showStyle ?? []);
+  const styleId =
+    (household as { humorStyles?: string[] }).humorStyles?.[0]?.trim() ||
+    household.showStyle?.[0]?.trim() ||
+    "mockumentary";
+  const sceneCount = options?.sceneCount ?? 4;
+  console.log("[script] comedy style:", styleId, "sceneCount:", sceneCount);
+
   const dog = household.dogs[0];
-  const dogLine = dog
-    ? `${dog.name}, a ${dog.breed || "dog"} with personality: ${(dog.personality?.length ? dog.personality : ["friendly"]).join(", ")}`
-    : "Main character (dog)";
-  const castList =
-    household.castMembers
-      ?.map((c) => `${c.name} (${c.role})`)
-      .join(", ") || "None";
+  if (!dog) throw new Error("No dog in household");
+  const castMembers = household.castMembers ?? [];
+  const comedyStyleBlock = getComedyStylePromptBlock(
+    styleId,
+    {
+      name: dog.name,
+      breed: dog.breed,
+      personality: dog.personality,
+      characterBio: dog.characterBio,
+      voiceArchetype: dog.voiceArchetype,
+    },
+    {
+      showTitle: household.showTitle,
+      humorStyles: (household as { humorStyles?: string[] }).humorStyles,
+      showStyle: household.showStyle,
+    },
+    castMembers.map((c) => ({ name: c.name, role: c.role })),
+    { sceneCount }
+  );
+
   const previousBlock =
     episodeHistory.length === 0
       ? "No previous episodes yet. This is the first one — make it memorable!"
@@ -267,74 +333,32 @@ export function buildScriptPrompt(
     .filter(Boolean)
     .join(", ");
   const lastSetting = episodeHistory[0]?.setting ?? null;
-
   let seasonalSection = "";
   const hint = getSeasonalHint();
-  if (hint) {
-    seasonalSection = `\nSEASONAL CONTEXT: ${hint} — consider incorporating this naturally if it fits.\n`;
-  }
+  if (hint) seasonalSection = `\nSEASONAL CONTEXT: ${hint} — consider incorporating if it fits.\n`;
 
-  const system = `You are the head writer of a personalized animated pet sitcom. Your job is to write a fresh, funny, original episode script every time.
+  const system = `You are the head writer of a personalized animated pet sitcom. Write a fresh, funny, original episode script. Everything is driven by the COMEDY STYLE below — structure, dialogue, and title format.
 
-SHOW DETAILS:
-- Show name: ${household.showTitle}
-- Comedy style inspired by: ${selectedShows}
-- Main character: ${dogLine}
-- Supporting cast: ${castList}
-- Episode number: ${episodeNumber}
-${household.comedyNotes?.trim() ? `- Vibe notes: ${household.comedyNotes}` : ""}
-${household.ownerName?.trim() ? `- Primary co-star (owner): ${household.ownerName}` : ""}
-${comedyStyleBlock ? `\n${comedyStyleBlock}\n` : ""}
+${comedyStyleBlock}
+
+Episode number: ${episodeNumber}
+${household.comedyNotes?.trim() ? `Vibe notes: ${household.comedyNotes}` : ""}
+${household.ownerName?.trim() ? `Primary co-star (owner): ${household.ownerName}` : ""}
 
 PREVIOUS EPISODES (DO NOT REPEAT THESE):
 ${previousBlock}
+${lastThreeCategories ? `\nPick a situation from a DIFFERENT category than recent: ${lastThreeCategories}.` : ""}
+${lastSetting ? `Never reuse the same setting two in a row (last was: ${lastSetting}).` : ""}
 
-RULES:
-1. Pick a situation from a DIFFERENT category than the last 3 episodes${lastThreeCategories ? ` (recent categories: ${lastThreeCategories})` : ""}.
-2. Never reuse the same setting two episodes in a row${lastSetting ? ` (last setting was: ${lastSetting})` : ""}.
-3. The dog never speaks out loud — inner monologue only as thought bubbles.
-4. Comedy style inspired by: ${selectedShows}.${comedyStyleBlock ? " Follow the COMEDY STYLE INSTRUCTIONS in SHOW DETAILS above." : ""}
-5. 3-act structure: Setup (30s) → Escalation (45s) → Punchline (15s) for a 90-second trailer.
-6. End on an ironic or unexpected punchline.
-7. Draw from this situation bank but be creative:
+SITUATION BANK — draw from but be creative:
 ${SITUATION_BANK}
 ${seasonalSection}
 ${plannedConcept ? `
-MANDATORY — YOU MUST WRITE THE SCRIPT FOR THIS EXACT EPISODE CONCEPT (do not change title, situation, or plot):
-- Title: ${plannedConcept.title}
-- Situation: ${plannedConcept.situation}
-- Category: ${plannedConcept.category}
-- Setting: ${plannedConcept.setting}
-- Plot device: ${plannedConcept.plotDevice}
-- Tags: ${(plannedConcept.tags || []).join(", ")}
+MANDATORY — WRITE THE SCRIPT FOR THIS EXACT CONCEPT (do not change title, situation, or plot):
+Title: ${plannedConcept.title} | Situation: ${plannedConcept.situation} | Category: ${plannedConcept.category} | Setting: ${plannedConcept.setting} | Plot: ${plannedConcept.plotDevice} | Tags: ${(plannedConcept.tags || []).join(", ")}
 ` : ""}
 
-OUTPUT: Return ONLY valid JSON, no markdown or code fences. Use this exact structure:
-{
-  "episodeTitle": "string",
-  "synopsis": "string (2 sentences max)",
-  "situation": "snake_case_situation_key",
-  "category": "home|outdoor|social|seasonal|emotional",
-  "setting": "string",
-  "plotDevice": "string (one sentence)",
-  "tags": ["string"],
-  "scenes": [
-    {
-      "sceneNumber": 1,
-      "setting": "string",
-      "type": "normal|confessional|montage|inner_monologue",
-      "characters": ["string"],
-      "action": "string",
-      "dialogue": [
-        {
-          "character": "string",
-          "line": "string",
-          "isThoughtBubble": boolean
-        }
-      ]
-    }
-  ]
-}`;
+OUTPUT: Return ONLY valid JSON, no markdown or code fences. Use the exact structure with scenes[].dialogueLines[]. Include isConfessional and cameraStyle per scene from the EPISODE STRUCTURE.`;
 
   const user = plannedConcept
     ? `Write the full script for Episode ${episodeNumber} of "${household.showTitle}" using EXACTLY this concept: "${plannedConcept.title}" — ${plannedConcept.plotDevice}. Return ONLY the JSON object, no other text.`
@@ -423,7 +447,15 @@ export async function getHouseholdForDirector(
   const h = await prisma.household.findUnique({
     where: { id: householdId },
     include: {
-      dogs: true,
+      dogs: {
+        select: {
+          name: true,
+          breed: true,
+          personality: true,
+          characterBio: true,
+          voiceArchetype: true,
+        },
+      },
       castMembers: true,
     },
   });
@@ -438,10 +470,12 @@ export async function getHouseholdForDirector(
       breed: d.breed,
       personality: d.personality ?? [],
       characterBio: d.characterBio,
+      voiceArchetype: d.voiceArchetype ?? null,
     })),
     castMembers: h.castMembers.map((c) => ({
       name: c.name,
       role: c.role,
+      animatedAvatar: c.animatedAvatar ?? null,
     })),
   };
 }
@@ -453,7 +487,7 @@ export async function getHouseholdForDirector(
  */
 export async function generateEpisodeScript(
   householdId: string,
-  options?: { plannedConcept?: PlannedConcept }
+  options?: { plannedConcept?: PlannedConcept; sceneCount?: number }
 ): Promise<DirectorScriptJson> {
   const household = await getHouseholdForDirector(householdId);
   if (!household) throw new Error("Household not found");
@@ -461,14 +495,25 @@ export async function generateEpisodeScript(
   const episodeHistory = await getEpisodeHistory(householdId);
   const episodeNumber = episodeHistory.length + 1;
   const plannedConcept = options?.plannedConcept;
+  const sceneCount = options?.sceneCount ?? 4;
 
   if (plannedConcept) {
     const { system, user } = buildScriptPrompt(
       household,
       episodeHistory,
       episodeNumber,
-      plannedConcept
+      plannedConcept,
+      { sceneCount }
     );
+    const dog = household.dogs[0];
+    console.log("[script-prompt] system prompt:", system.substring(0, 500));
+    console.log("[script-prompt] dog data:", {
+      name: dog?.name,
+      breed: dog?.breed,
+      personality: dog?.personality,
+      bio: (dog as { bio?: string | null })?.bio,
+      characterBio: dog?.characterBio,
+    });
     return callClaude(system, user);
   }
 
@@ -481,8 +526,19 @@ export async function generateEpisodeScript(
     const { system, user } = buildScriptPrompt(
       household,
       historyForRetry,
-      episodeNumber
+      episodeNumber,
+      undefined,
+      { sceneCount }
     );
+    const dog = household.dogs[0];
+    console.log("[script-prompt] system prompt:", system.substring(0, 500));
+    console.log("[script-prompt] dog data:", {
+      name: dog?.name,
+      breed: dog?.breed,
+      personality: dog?.personality,
+      bio: (dog as { bio?: string | null })?.bio,
+      characterBio: dog?.characterBio,
+    });
     script = await callClaude(system, user);
     tooSimilar = checkSimilarity(script, episodeHistory);
 

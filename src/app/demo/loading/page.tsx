@@ -1,7 +1,7 @@
 "use client";
 
 import { useSearchParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 
@@ -36,7 +36,7 @@ function getTimeLabel(seconds: number): string {
   return "Almost ready...";
 }
 
-export default function DemoLoadingPage() {
+function DemoLoadingContent() {
   const searchParams = useSearchParams();
   const jobId = searchParams.get("jobId");
   const dogName = searchParams.get("dogName") ?? "";
@@ -156,5 +156,28 @@ export default function DemoLoadingPage() {
         </div>
       )}
     </div>
+  );
+}
+
+const FALLBACK = (
+  <div
+    className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-8 px-4"
+    style={{ backgroundColor: DEMO_COLORS.deepPlum }}
+  >
+    <div className="flex h-24 w-24 items-center justify-center rounded-full bg-white/10 animate-bounce">
+      <span className="text-5xl" aria-hidden>🐕</span>
+    </div>
+    <p className="text-center text-lg font-medium text-white" style={{ fontFamily: "Fredoka One, sans-serif" }}>
+      Greenlit! Your pilot episode is in production...
+    </p>
+    <p className="min-h-[1.5rem] text-center text-sm text-amber-200">Loading...</p>
+  </div>
+);
+
+export default function DemoLoadingPage() {
+  return (
+    <Suspense fallback={FALLBACK}>
+      <DemoLoadingContent />
+    </Suspense>
   );
 }

@@ -37,15 +37,16 @@ export async function animateScene(
 /**
  * Generate one scene clip via Hailuo 02 image-to-video.
  * Uses the dog's animated avatar as the first frame. PAID ONLY.
- * Duration: API supports "6" | "10" only (~$0.34/episode at 4×6s 512P + ~$0.13 other ≈ $0.50/episode).
+ * Duration: API supports "5" | "6" | "10" (~$0.34/episode at 10×5s 512P for ~2 min video).
  */
 export async function hailuoImageToVideo(
   imageUrl: string,
   prompt: string,
-  options?: { duration?: 6 | 10; resolution?: "768P" | "512P" }
+  options?: { duration?: 5 | 6 | 10; resolution?: "768P" | "720P" | "512P" }
 ): Promise<string> {
   getFalConfig();
-  const duration: "6" | "10" = options?.duration === 10 ? "10" : "6";
+  const duration: "5" | "6" | "10" =
+    options?.duration === 10 ? "10" : options?.duration === 5 ? "5" : "6";
   const resolution = options?.resolution ?? "512P";
   const result = await fal.subscribe(FAL_HAILUO_02, {
     input: {

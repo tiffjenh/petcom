@@ -3,6 +3,7 @@ import type { User } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { inngest } from "@/inngest/client";
 import { sendWelcomeEmail } from "@/lib/notify";
+import { assignVoiceArchetype } from "@/lib/ai/voice-archetypes";
 
 export type StartPilotBody = {
   dogName: string;
@@ -66,8 +67,16 @@ export async function runStartPilot(user: User, body: StartPilotBody) {
       personality,
       characterBio: characterBio ?? null,
       photoUrl: photoUrls[0],
+      photoUrls,
     },
   });
+
+  const archetype = assignVoiceArchetype(dog.personality ?? []);
+  await prisma.dog.update({
+    where: { id: dog.id },
+    data: { voiceArchetype: archetype.id },
+  });
+  console.log(`[voice] ${dog.name} assigned archetype: ${archetype.id}`);
 
   const episode = await prisma.episode.create({
     data: {

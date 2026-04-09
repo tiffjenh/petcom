@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Suspense } from "react";
 import { Button } from "@/components/ui/button";
 import { PawCastLogo } from "@/components/shared/PawCastLogo";
 import { DemoTrailerFlow } from "./demo-trailer-flow";
@@ -26,7 +27,9 @@ export default function DemoPage() {
         </p>
 
         <section className="mt-10">
-          <DemoTrailerFlow />
+          <Suspense fallback={<div className="min-h-[200px] animate-pulse rounded-lg bg-muted/50" />}>
+            <DemoTrailerFlow />
+          </Suspense>
         </section>
       </main>
     </div>

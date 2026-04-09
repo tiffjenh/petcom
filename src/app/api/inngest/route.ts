@@ -3,7 +3,9 @@ import { inngest } from "@/inngest/client";
 import {
   generateEpisodeFunction,
   generateAvatarsFunction,
+  generateCastAvatarFunction,
   dailyEpisodeCron,
+  weeklyEpisodeCron,
   onboardingSequenceCron,
   previewGenerateFunction,
   dogLoraTrainFunction,
@@ -14,7 +16,9 @@ export const { GET, POST, PUT } = serve({
   functions: [
     generateEpisodeFunction,
     generateAvatarsFunction,
+    generateCastAvatarFunction,
     dailyEpisodeCron,
+    weeklyEpisodeCron,
     onboardingSequenceCron,
     previewGenerateFunction,
     dogLoraTrainFunction,

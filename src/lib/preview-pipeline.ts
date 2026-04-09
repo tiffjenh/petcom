@@ -96,7 +96,8 @@ async function getAvatarUrl(
   if (photoUrls.length === 0) throw new Error("No photo URLs for avatar");
 
   try {
-    return await generateDogAvatarFal(photoUrls, dogName);
+    const { primary } = await generateDogAvatarFal(photoUrls, dogName);
+    return primary;
   } catch (e) {
     console.error("[FAL] Avatar failed:", e);
     throw new Error("Could not generate avatar");

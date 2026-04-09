@@ -164,11 +164,16 @@ If you click **Start Filming!** on the demo and the loading screen never finishe
    ```
    Or: `npx inngest-cli@latest dev -u http://localhost:2000/api/inngest`
 
-   Keep this running while you use the app. The app runs on port **2000**; the CLI points at `http://localhost:2000/api/inngest`.
+   Keep this running while you use the app. The app runs on port **2000**; the CLI points at `http://localhost:2000/api/inngest`. Open the Inngest UI at **http://localhost:8288**.
 
-   **If you see "Inngest API Error: 401 Event key not found":** Your app must send an event key when calling Inngest. Add to `.env.local`:
-   - **Local dev:** Run `npm run inngest:dev`, then open the Inngest dev UI (e.g. **http://localhost:8288**). In the UI, open **Manage** or **Sync** and copy the **Event key** (or **Signing key**). Add it to `.env.local` as `INNGEST_EVENT_KEY=...` and restart your Next.js dev server.
-   - **Production:** Use [Inngest Cloud](https://www.inngest.com); in the dashboard get your Event key and set `INNGEST_EVENT_KEY` and `INNGEST_SIGNING_KEY` in your host’s environment variables.
+   **Required in `.env.local` for local dev:**
+   ```
+   INNGEST_SIGNING_KEY=local
+   INNGEST_EVENT_KEY=local
+   ```
+   The dev server does not validate keys locally; these dummy values are enough.
+
+   **Production:** Use [Inngest Cloud](https://www.inngest.com); in the dashboard get your Event key and Signing key and set `INNGEST_EVENT_KEY` and `INNGEST_SIGNING_KEY` in your host’s environment variables.
 
    If `npm run inngest:dev` fails with **address already in use** (e.g. 8288 or 50052), another Inngest dev server is already running. Use that one, or stop it and start a fresh one.
 

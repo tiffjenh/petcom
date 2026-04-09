@@ -1,11 +1,26 @@
 import Anthropic from "@anthropic-ai/sdk";
 
-const SYSTEM_PROMPT = `You are a professional TV comedy writers room. You write sitcom episodes starring real dogs based on their actual personalities, quirks, and real-life behaviors. Your scripts are specific, funny, and feel like they were written by someone who knows this exact dog personally.
+const SYSTEM_PROMPT = `You are a professional TV comedy writers room. You write PILOT EPISODES for a mockumentary-style sitcom starring a real dog. Your scripts match the tone, structure, and narrator voice of a dry documentary about absurdly serious (to the dog) events.
+
+QUALITY & FORMAT BENCHMARK — match this tone and structure:
+
+- TITLE: Punchy, often two short phrases. Example: "The Ball. A Documentary."
+- SYNOPSIS: 2-3 sentences, specific. Name the dog and the stakes. Example: "When Waffles loses her favorite ball at the park, she launches a full investigation. No stone unturned. No dog unquestioned."
+- SCENE TYPES:
+  * ACTION SHOT — We see the location and action. Narrator speaks in dry documentary voiceover (third person, matter-of-fact, specific details: times, names, durations). Example: "Every morning, Waffles arrives at the park with one goal. One purpose. One ball." / "At 9:31am, the ball enters the bushes. Waffles enters the bushes. Only Waffles comes out."
+  * CONFESSIONAL — Character looks directly at camera (talking-head). Narrator speaks IN FIRST PERSON as that character: deadpan, delusionally confident, or unhinged depending on the character. Example (dog): "The ball and I have an understanding. I throw it — well, someone throws it for me — and then I bring it back. Every time. Because I am a professional." Example (other dog): "I don't even like balls. I'm more of a stick guy. But I'm not gonna say I didn't see anything."
+- SETTING: Be specific. "Riverside Park, 9:14am. A perfect Tuesday." / "The park bench area. Three dogs are present — Bruno (a large Lab), Pretzel (a tiny dachshund), and an unnamed Husky who hasn't stopped howling."
+- OTHER CHARACTERS: Include at least 1–2 other named characters (other dogs, humans, wildlife). Give each a name and one trait. They can get their own confessional lines. Example: "Bruno, a four-year-old Labrador with a known history of ball theft and zero remorse."
+- PACING: Use "beat" or "Long pause." inside narratorLine where a pause fits. The narrator never winks at the camera; the humor is in the seriousness.
+- TAG / END CARD: Closing narrator line that wraps the story with a dry, ironic button. Example: "The ball was later found under a stroller. Waffles has not apologized to Bruno."
+
+REFERENCE SCENE (structure to emulate):
+- SCENE 2 — CONFESSIONAL (Waffles looks directly at camera)
+- actionDescription: "Waffles sits in front of a plain background, looking directly at camera."
+- narratorLine: "The ball and I have an understanding. I throw it — well, someone throws it for me — and then I bring it back. Every time. Because I am a professional. beat I'm very good at my job."
 
 Rules:
-- Every plot must directly involve one of the dog's real quirks or behaviors from their bio. Not generic dog behavior — their specific behavior.
-- The humor style must shape the entire episode structure, not just the tone.
-- Characters must feel real and consistent throughout.
+- Every plot must use at least one specific quirk or behavior from the dog's character bio. Not generic — this exact dog.
 - Always respond with valid JSON only, no markdown, no explanation outside the JSON.`;
 
 export type EpisodeScriptParams = {
@@ -123,53 +138,56 @@ export async function generateEpisodeScript(
   const breedLabel = breed?.trim() || "mixed breed";
   const personalityStr = personality.length ? personality.join(", ") : "friendly";
 
-  const userPrompt = `Write a 2-minute pilot episode for a sitcom called "${showTitle}".
+  const userPrompt = `Write a 2-minute pilot episode for "${showTitle}" in the documentary/mockumentary style from the benchmark.
 
 STARRING:
 - ${dogName} — ${breedLabel} dog
 - Personality: ${personalityStr}
-- Character bio: ${characterBio || "(none provided — use personality and invent one specific quirk)"}
+- Character bio (mine this for the plot): ${characterBio || "(none — invent one specific quirk and build the plot around it)"}
 - Co-star: ${ownerName ?? "the owner"}
 
 HUMOR STYLE: ${humorStyles.length ? humorStyles.join(" + ") : "sitcom_classic"}
 
 ${humorBlock}
 
-EPISODE REQUIREMENTS:
-- The plot MUST be directly inspired by something specific in ${dogName}'s character bio above. Pick the most comedic detail.
-- 4 scenes total: cold open, 2 main act scenes, tag/ending
-- Each scene: heading, 2-3 sentence action description for video generation, and narrator line (1-2 sentences read aloud over the scene)
-- The narrator line should match the humor style (e.g. deadpan for dry wit, dramatic for reality TV, etc.)
+REQUIREMENTS:
+- Plot must turn on something specific from ${dogName}'s bio (e.g. favorite toy, nemesis, routine). Not generic.
+- 4 scenes: cold open (ACTION SHOT), 2 middle scenes (mix ACTION SHOT and CONFESSIONAL — at least one confessional where ${dogName} or another character looks at camera), tag (closing narrator line).
+- HEADING: Use "SCENE N — ACTION SHOT" or "SCENE N — CONFESSIONAL (Character, brief descriptor)". For action shots, put the specific setting in actionDescription (e.g. "Riverside Park, 9:14am. A perfect Tuesday.").
+- ACTION DESCRIPTION: Clear visual for animation; include location and time when relevant; name any other characters (other dogs, humans) with one trait.
+- NARRATOR LINE: For ACTION SHOT — dry documentary voiceover, specific details, matter-of-fact. For CONFESSIONAL — first person as that character, deadpan or delusionally confident. You may include "beat" or "Long pause." for pacing. One to three sentences per scene; can be multiple short lines.
+- Include at least one other named character (another dog, human, or animal) with a trait; they can have a confessional line.
+- TAG narratorLine: Ironic, dry closing (e.g. "The ball was later found under a stroller. Waffles has not apologized to Bruno.").
 
-Return JSON:
+Return ONLY valid JSON:
 {
-  "title": "fun episode title referencing the specific plot",
-  "synopsis": "2-3 sentences describing what happens, mention ${dogName} by name",
+  "title": "Punchy two-part title e.g. The Ball. A Documentary.",
+  "synopsis": "2-3 sentences. Name ${dogName} and the stakes. Specific.",
   "coldOpen": {
     "sceneNumber": 0,
-    "heading": "INT. [LOCATION] - DAY/NIGHT",
-    "actionDescription": "visual description for video generation",
-    "narratorLine": "what the narrator says over this scene"
+    "heading": "SCENE 0 — ACTION SHOT",
+    "actionDescription": "Setting: [specific place, time]. Visual action for animation. Name any other characters present.",
+    "narratorLine": "Dry documentary narrator line(s). Specific. Optionally end with beat."
   },
   "scenes": [
     {
       "sceneNumber": 1,
-      "heading": "INT/EXT. [LOCATION] - DAY/NIGHT",
-      "actionDescription": "visual description for video generation, always starts with '${dogName} the ${breedLabel}'",
-      "narratorLine": "narrator line matching the humor style"
+      "heading": "SCENE 1 — CONFESSIONAL or ACTION SHOT",
+      "actionDescription": "If confessional: ${dogName} (or other character) looks directly at camera, [brief descriptor]. If action: Setting and visual.",
+      "narratorLine": "First person if confessional (as the character). Documentary voice if action. Use beat where it fits."
     },
     {
       "sceneNumber": 2,
-      "heading": "INT/EXT. [LOCATION] - DAY/NIGHT",
-      "actionDescription": "visual description for video generation, always starts with '${dogName} the ${breedLabel}'",
-      "narratorLine": "narrator line matching the humor style"
+      "heading": "SCENE 2 — ACTION SHOT or CONFESSIONAL",
+      "actionDescription": "Visual and setting. Other named characters with one trait.",
+      "narratorLine": "Narrator line matching scene type."
     }
   ],
   "tag": {
     "sceneNumber": 4,
-    "heading": "INT. [LOCATION] - LATER",
-    "actionDescription": "brief funny closing scene",
-    "narratorLine": "closing narrator line"
+    "heading": "TAG / END CARD",
+    "actionDescription": "Brief closing visual or just end card.",
+    "narratorLine": "Dry, ironic closing line. Epilogue feel."
   }
 }`;
 

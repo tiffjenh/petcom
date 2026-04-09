@@ -101,11 +101,12 @@ export async function POST(req: Request) {
       );
 
       try {
-        const url = await withTimeout(
+        const result = await withTimeout(
           generateDogAvatar(trimmedUrls, dogName),
           45000,
           "avatar"
         );
+        const url = result.primary;
         styleImages[STYLE_KEY] = url;
         controller.enqueue(
           encoder.encode(

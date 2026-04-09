@@ -1,5 +1,6 @@
 import { inngest } from "./client";
 import { prisma } from "@/lib/prisma";
+import type { Prisma } from "@prisma/client";
 import { runPreviewPipeline } from "@/lib/preview-pipeline";
 import * as astria from "@/lib/astria";
 import { generateScript } from "@/lib/ai/script";
@@ -9,17 +10,42 @@ import {
   type DirectorScriptJson,
   type PlannedConcept,
 } from "@/lib/episodeDirector";
-import { generateDogAvatar as generateDogAvatarFal } from "@/lib/ai/fal-styles";
+import {
+  generateDogAvatar as generateDogAvatarFal,
+  generateHumanAvatarFal,
+  HAILUO_SCENE_PROMPT_PREFIX,
+  HAILUO_SCENE_PROMPT_SUFFIX,
+} from "@/lib/ai/fal-styles";
 import { generateHumanAvatar } from "@/lib/ai/avatar";
 import { hailuoImageToVideo } from "@/lib/fal";
 import {
   generateSceneAudioTracks,
   generateSpeechToBuffer,
+  generateLineAudio,
+  generateLineAudioFromArchetype,
+  stitchAudioBuffersWithGap,
+  getVoiceIdForSpeakerRole,
+  stitchAudioBuffers,
   type CharacterVoiceMap,
+  type SpeakerRole,
   THOUGHT_BUBBLE_VOICE_ID,
 } from "@/lib/ai/elevenlabs";
+import {
+  getPrimaryComedyCategory,
+  getNarratorVoiceSettingsForStyle,
+  getNarratorVoiceSettingsFromStyleId,
+} from "@/lib/prompts/scriptPrompt";
 import { generateEpisodeScript as generatePilotEpisodeScriptFromEpisodeScript } from "@/lib/ai/episode-script";
-import { assembleFullEpisode } from "@/lib/ai/ffmpeg-assembly";
+import { assembleFullEpisode, assemblePilotEpisode, assembleV1Episode } from "@/lib/ai/ffmpeg-assembly";
+import {
+  PILOT_EPISODE_ID,
+  HAILUO_PILOT_PREFIX,
+  PILOT_SCRIPT,
+  PILOT_END_CARD,
+  PILOT_TITLE,
+  PILOT_SHOW_TITLE,
+  PILOT_SYNOPSIS,
+} from "@/lib/ai/pilot-documentary-script";
 import { getSupabaseAdmin, getSupabaseStorageBucket } from "@/lib/supabase";
 import { notifyEpisodeReady, sendShareReminderEmail, sendUpgradePromptEmail } from "@/lib/notify";
 import { randomUUID } from "crypto";
@@ -45,7 +71,7 @@ function buildCharacterVoiceMap(
   const map: CharacterVoiceMap = {};
   const names = new Set<string>();
   for (const scene of script.scenes) {
-    for (const d of scene.dialogue) {
+    for (const d of scene.dialogue ?? []) {
       if (!d.isThoughtBubble) names.add(d.character);
     }
   }
@@ -108,11 +134,12 @@ type HouseholdPayload = {
   season: number;
   showTitle: string;
   showStyle: string[];
+  humorStyles?: string[];
   comedyNotes: string | null;
   ownerName: string | null;
   plan: string | null;
   plannedConcept?: PlannedConcept | null;
-  dogs: { id: string; name: string; breed: string | null; personality: string[]; characterBio: string | null; photoUrl: string; animatedAvatar: string | null; voiceId: string | null }[];
+  dogs: { id: string; name: string; breed: string | null; personality: string[]; characterBio: string | null; photoUrl: string; photoUrls?: string[]; animatedAvatar: string | null; voiceId: string | null; voiceArchetype: string | null }[];
   castMembers: { id: string; name: string; role: string; photoUrl: string; animatedAvatar: string | null; voiceId: string | null }[];
 };
 
@@ -134,6 +161,30 @@ type PilotGeneratePayload = {
 const MAX_PILOT_SCENES = 4;
 const PILOT_VIDEO_PROMPT_SUFFIX = ", Pixar 3D animated style, smooth motion, expressive dog character";
 
+/** Build Hailuo prompt from scene type and cameraStyle (comedy-style-driven). */
+function buildClipPrompt(
+  scene: {
+    type?: string;
+    isConfessional?: boolean;
+    cameraStyle?: string;
+    setting?: string;
+    action?: string;
+  },
+  clipType: "wide" | "closeup"
+): string {
+  const isConfessional =
+    scene.isConfessional === true || scene.type === "confessional";
+  const cameraStyle = (scene.cameraStyle ?? "").trim();
+  const setting = (scene.setting ?? "").trim();
+  const action = (scene.action ?? "").trim();
+
+  if (isConfessional) {
+    return `Pixar 3D animated dog sitting facing camera directly. Extremely expressive face, natural subtle mouth movement. Slight jaw movement, eyebrow raises, head tilts. Huge expressive eyes, warm interview lighting. Slightly blurred background, TV interview setup feel. ${clipType === "closeup" ? "Extreme close-up on face." : "Medium shot, full upper body visible."} Dug Days Disney+ quality. No text, no watermarks.`;
+  }
+
+  return `Pixar 3D animated scene, Dug Days Disney+ quality. ${cameraStyle || "Warm golden cinematic lighting, lush saturated green grass."} ${setting}. ${action}. ${clipType === "closeup" ? "Close-up reaction shot, huge expressive eyes." : "Wide shot showing full action."} Warm cinematic Pixar lighting, vivid colors. Smooth natural character movement. No text, no watermarks.`;
+}
+
 export const generateEpisodeFunction = inngest.createFunction(
   {
     id: "generate-episode",
@@ -151,6 +202,168 @@ export const generateEpisodeFunction = inngest.createFunction(
       (data as PilotGeneratePayload).photoUrls.length > 0;
 
     try {
+    // Hardcoded 90s pilot: "The Ball. A Documentary." — 10 scenes × 2 clips = 20 Hailuo, continuous narration
+    if (episodeId === PILOT_EPISODE_ID) {
+      const pilotDocPayload = await step.run("pilot-doc-fetch", async () => {
+        const episode = await prisma.episode.findUnique({
+          where: { id: episodeId },
+          include: {
+            household: {
+              include: {
+                user: { select: { id: true } },
+                dogs: true,
+              },
+            },
+          },
+        });
+        if (!episode || episode.householdId !== householdId) throw new Error("Pilot episode not found");
+        await prisma.episode.update({
+          where: { id: episodeId },
+          data: { status: "generating" },
+        });
+        const h = episode.household;
+        const primaryDog = h.dogs[0];
+        if (!primaryDog) throw new Error("Pilot household has no dog");
+        let avatarUrl = primaryDog.animatedAvatar;
+        if (!avatarUrl) {
+          const dogWithUrls = primaryDog as { photoUrls?: string[] };
+          const photoUrls =
+            Array.isArray(dogWithUrls.photoUrls) && dogWithUrls.photoUrls.length > 0
+              ? dogWithUrls.photoUrls
+              : [primaryDog.photoUrl];
+          const { primary, alt } = await generateDogAvatarFal(photoUrls, primaryDog.name, primaryDog.breed);
+          avatarUrl = primary;
+          await prisma.dog.update({
+            where: { id: primaryDog.id },
+            data: { animatedAvatar: primary, animatedAvatarAlt: alt } as Prisma.DogUpdateInput,
+          });
+        }
+        await prisma.episode.update({
+          where: { id: episodeId },
+          data: {
+            title: PILOT_TITLE,
+            synopsis: PILOT_SYNOPSIS,
+            script: {
+              episodeTitle: PILOT_TITLE,
+              synopsis: PILOT_SYNOPSIS,
+              scenes: PILOT_SCRIPT.map((s) => ({
+                sceneNumber: s.sceneNumber,
+                type: s.type,
+                setting: s.setting,
+                action: s.action,
+                narratorLine: s.narratorLine,
+                speakerRole: s.speakerRole,
+              })),
+            },
+          },
+        });
+        return {
+          episodeId,
+          householdId: h.id,
+          userId: h.userId,
+          avatarUrl: avatarUrl as string,
+        };
+      });
+
+      const FAL_TIMEOUT_MS = 3 * 60 * 1000;
+      const allClipUrls = await step.run("pilot-doc-animate", async () => {
+        const urls: string[] = [];
+        for (let s = 0; s < PILOT_SCRIPT.length; s++) {
+          const scene = PILOT_SCRIPT[s];
+          for (let c = 0; c < 2; c++) {
+            const prompt = HAILUO_PILOT_PREFIX + scene.clipPrompts[c];
+            try {
+              const url = await Promise.race([
+                hailuoImageToVideo(pilotDocPayload.avatarUrl, prompt, {
+                  duration: 5,
+                  resolution: "512P",
+                }),
+                new Promise<string>((_, rej) =>
+                  setTimeout(() => rej(new Error("FAL timeout after 3 minutes")), FAL_TIMEOUT_MS)
+                ),
+              ]);
+              urls.push(url);
+              console.log(`[pilot-doc] Scene ${s + 1} clip ${c + 1}/2 done`);
+            } catch (err) {
+              console.error(`[pilot-doc] Scene ${s + 1} clip ${c + 1} failed:`, err);
+              throw err;
+            }
+          }
+        }
+        return urls;
+      });
+
+      const fullAudioBase64 = await step.run("pilot-doc-audio", async () => {
+        const buffers: Buffer[] = [];
+        for (const scene of PILOT_SCRIPT) {
+          const voiceId = getVoiceIdForSpeakerRole(scene.speakerRole as SpeakerRole);
+          const buf = await generateLineAudio(scene.narratorLine, voiceId);
+          if (buf.length) buffers.push(buf);
+        }
+        const endVoiceId = getVoiceIdForSpeakerRole(PILOT_END_CARD.speakerRole as SpeakerRole);
+        const endBuf = await generateLineAudio(PILOT_END_CARD.narratorLine, endVoiceId);
+        if (endBuf.length) buffers.push(endBuf);
+        const fullAudio = await stitchAudioBuffers(buffers);
+        return Buffer.from(fullAudio).toString("base64");
+      });
+
+      const pilotUrls = await step.run("pilot-doc-assemble", async () => {
+        const fullAudioBuffer = Buffer.from(fullAudioBase64, "base64");
+        const { verticalBuffer, landscapeBuffer, thumbnailBuffer } = await assemblePilotEpisode({
+          showTitle: PILOT_SHOW_TITLE,
+          episodeTitle: PILOT_TITLE,
+          clipUrls: allClipUrls,
+          fullAudioBuffer,
+        });
+        const bucket = getSupabaseStorageBucket();
+        const uid = randomUUID();
+        const basePath = `${pilotDocPayload.userId}/episodes/${episodeId}-${uid}`;
+        const admin = getSupabaseAdmin();
+        const up = (path: string, buf: Buffer, contentType: string) =>
+          admin.storage.from(bucket).upload(path, buf, { contentType, upsert: true });
+        const [{ error: e1 }, { error: e2 }, { error: e3 }] = await Promise.all([
+          up(`${basePath}.mp4`, verticalBuffer, "video/mp4"),
+          up(`${basePath}-landscape.mp4`, landscapeBuffer, "video/mp4"),
+          up(`${basePath}-thumb.jpg`, thumbnailBuffer, "image/jpeg"),
+        ]);
+        if (e1 || e2 || e3) throw new Error([e1?.message, e2?.message, e3?.message].filter(Boolean).join("; "));
+        return {
+          videoUrl: admin.storage.from(bucket).getPublicUrl(`${basePath}.mp4`).data.publicUrl,
+          videoUrlLandscape: admin.storage.from(bucket).getPublicUrl(`${basePath}-landscape.mp4`).data.publicUrl,
+          thumbnailUrl: admin.storage.from(bucket).getPublicUrl(`${basePath}-thumb.jpg`).data.publicUrl,
+        };
+      });
+
+      await step.run("pilot-doc-save", async () => {
+        await prisma.episode.update({
+          where: { id: episodeId },
+          data: {
+            status: "ready",
+            videoUrl: pilotUrls.videoUrl,
+            videoUrlLandscape: pilotUrls.videoUrlLandscape,
+            thumbnailUrl: pilotUrls.thumbnailUrl,
+            publishedAt: new Date(),
+          },
+        });
+        if (pilotDocPayload.userId) {
+          await notifyEpisodeReady({
+            episodeTitle: PILOT_TITLE,
+            episodeId,
+            thumbnailUrl: pilotUrls.thumbnailUrl ?? null,
+            userId: pilotDocPayload.userId,
+          });
+        }
+      });
+
+      return {
+        success: true,
+        episodeId,
+        videoUrl: pilotUrls.videoUrl,
+        videoUrlLandscape: pilotUrls.videoUrlLandscape,
+        thumbnailUrl: pilotUrls.thumbnailUrl,
+      };
+    }
+
     if (isPilot) {
       const pilot = data as PilotGeneratePayload;
       const episode = await prisma.episode.findUnique({
@@ -171,12 +384,12 @@ export const generateEpisodeFunction = inngest.createFunction(
       const plan = episode.household.user?.subscription?.plan ?? "free";
 
       const avatarUrl = await step.run("pilot-generate-avatar", async () => {
-        const url = await generateDogAvatarFal(pilot.photoUrls, pilot.dogName);
+        const { primary, alt } = await generateDogAvatarFal(pilot.photoUrls, pilot.dogName, pilot.breed);
         await prisma.dog.update({
           where: { id: pilot.dogId },
-          data: { animatedAvatar: url },
+          data: { animatedAvatar: primary, animatedAvatarAlt: alt } as Prisma.DogUpdateInput,
         });
-        return url;
+        return primary;
       });
 
       const script = await step.run("pilot-generate-script", async () => {
@@ -234,14 +447,12 @@ export const generateEpisodeFunction = inngest.createFunction(
 
       const urls = await step.run("pilot-assemble", async () => {
         const sceneAudioBuffers: Buffer[] = audioBase64ByScene.map((b64) => Buffer.from(b64, "base64"));
-        const applyWatermark = plan !== "pro" && plan !== "family";
         const { verticalBuffer, landscapeBuffer, thumbnailBuffer } = await assembleFullEpisode({
           showTitle: pilot.showTitle,
           episodeTitle: script.title,
           castNames: [pilot.dogName],
           sceneClipUrls,
           sceneAudioBuffers,
-          applyWatermark,
         });
         const bucket = getSupabaseStorageBucket();
         const uid = randomUUID();
@@ -291,6 +502,9 @@ export const generateEpisodeFunction = inngest.createFunction(
     }
 
     const { episodeNum, season } = data as { episodeId: string; householdId: string; episodeNum: number; season: number };
+    const sceneCount = (data as { sceneCount?: number }).sceneCount ?? 4;
+    console.log("[episode] sceneCount:", sceneCount);
+
     const householdPayload = await step.run("fetch-household", async () => {
       const episode = await prisma.episode.findUnique({
         where: { id: episodeId },
@@ -327,6 +541,7 @@ export const generateEpisodeFunction = inngest.createFunction(
         season,
         showTitle: h.showTitle,
         showStyle: h.showStyle,
+        humorStyles: h.showStyle,
         comedyNotes: h.comedyNotes,
         ownerName: h.ownerName ?? null,
         plan: h.user?.subscription?.plan ?? null,
@@ -338,14 +553,16 @@ export const generateEpisodeFunction = inngest.createFunction(
           personality: d.personality,
           characterBio: d.characterBio ?? null,
           photoUrl: d.photoUrl,
+          photoUrls: (d as { photoUrls?: string[] }).photoUrls,
           animatedAvatar: d.animatedAvatar,
           voiceId: d.voiceId,
+          voiceArchetype: (d as { voiceArchetype?: string | null }).voiceArchetype ?? null,
         })),
         castMembers: h.castMembers.map((c) => ({
           id: c.id,
           name: c.name,
           role: c.role,
-          photoUrl: c.photoUrl,
+          photoUrl: ((c as { photoUrls?: string[] }).photoUrls?.[0]) ?? c.photoUrl ?? "",
           animatedAvatar: c.animatedAvatar,
           voiceId: c.voiceId,
         })),
@@ -355,23 +572,32 @@ export const generateEpisodeFunction = inngest.createFunction(
     const { script, characterVoiceMap } = await step.run("generate-script", async () => {
       const scriptResult = (await generateEpisodeScript(
         householdPayload.householdId,
-        householdPayload.plannedConcept ? { plannedConcept: householdPayload.plannedConcept } : undefined
+        {
+          plannedConcept: householdPayload.plannedConcept,
+          sceneCount,
+        }
       )) as DirectorScriptJson;
+      console.log("[script] generated:", JSON.stringify(scriptResult, null, 2).slice(0, 2000));
       await prisma.episode.update({
         where: { id: householdPayload.episodeId },
         data: {
           title: scriptResult.episodeTitle,
           synopsis: scriptResult.synopsis,
           script: JSON.parse(JSON.stringify(scriptResult)),
+          status: "scripted",
         },
       });
       await saveEpisodeSituation(householdPayload.episodeId, scriptResult);
       const map = buildCharacterVoiceMap(
-        householdPayload.dogs,
-        householdPayload.castMembers,
-        scriptResult
+        householdPayload.dogs as { id: string; name: string; voiceId: string | null }[],
+        householdPayload.castMembers as { id: string; name: string; voiceId: string | null }[],
+        scriptResult as EpisodeScriptJson
       );
-      await persistVoiceIds(householdPayload.dogs, householdPayload.castMembers, map);
+      await persistVoiceIds(
+        householdPayload.dogs as { id: string; name: string; voiceId: string | null }[],
+        householdPayload.castMembers as { id: string; name: string; voiceId: string | null }[],
+        map
+      );
       return { script: scriptResult, characterVoiceMap: map };
     });
 
@@ -382,55 +608,158 @@ export const generateEpisodeFunction = inngest.createFunction(
       if (primaryDog.animatedAvatar) {
         return { primaryAvatarUrl: primaryDog.animatedAvatar };
       }
-      const photoUrls = [primaryDog.photoUrl];
-      const url = await generateDogAvatarFal(photoUrls, primaryDog.name);
+      const photoUrls = Array.isArray(primaryDog.photoUrls) && primaryDog.photoUrls.length > 0
+        ? primaryDog.photoUrls
+        : [primaryDog.photoUrl];
+      const { primary, alt } = await generateDogAvatarFal(photoUrls, primaryDog.name, primaryDog.breed);
       await prisma.dog.update({
         where: { id: primaryDog.id },
-        data: { animatedAvatar: url },
+        data: { animatedAvatar: primary, animatedAvatarAlt: alt } as Prisma.DogUpdateInput,
       });
-      return { primaryAvatarUrl: url };
+      return { primaryAvatarUrl: primary };
     });
 
-    const avatarForScenes = ensureAvatar.primaryAvatarUrl;
+    const avatarForScenes = ensureAvatar.primaryAvatarUrl as string;
 
-    // TODO: restore to all 4 scenes + 768P for production
-    const FAL_TIMEOUT_MS = 3 * 60 * 1000; // 3 minutes
+    const castWithAvatars = householdPayload.castMembers.filter(
+      (c): c is typeof householdPayload.castMembers[0] & { animatedAvatar: string } =>
+        !!c.animatedAvatar
+    );
+
+    const styleId =
+      householdPayload.humorStyles?.[0]?.trim() ||
+      householdPayload.showStyle?.[0]?.trim() ||
+      "mockumentary";
+
+    const FAL_TIMEOUT_MS = 3 * 60 * 1000;
     const sceneClipUrls = await step.run("animate-scenes", async () => {
       const urls: (string | null)[] = [];
-      const scenes = script.scenes;
-      const testScenes = scenes.slice(0, 2);
-      for (let i = 0; i < testScenes.length; i++) {
-        const scene = testScenes[i];
-        const scenePrompt = [scene.setting, scene.action].filter(Boolean).join(". ");
-        try {
-          console.log(`[animate] Starting scene ${i + 1} of ${testScenes.length}...`);
-          const clipUrl = await Promise.race([
-            hailuoImageToVideo(avatarForScenes, scenePrompt, {
-              duration: 5 as 6,
-              resolution: "512P",
-            }),
-            new Promise<string>((_, reject) =>
-              setTimeout(
-                () => reject(new Error("FAL timeout after 3 minutes")),
-                FAL_TIMEOUT_MS
-              )
-            ),
-          ]);
-          urls.push(clipUrl);
-          console.log(`[animate] Scene ${i + 1} complete:`, clipUrl);
-        } catch (err) {
-          console.error(`[animate] Scene ${i + 1} failed:`, err);
-          urls.push(null);
+      const scenes = script.scenes.slice(0, sceneCount);
+      for (let i = 0; i < scenes.length; i++) {
+        const scene = scenes[i];
+        for (const clipType of ["wide", "closeup"] as const) {
+          const prompt = buildClipPrompt(
+            {
+              type: scene.type,
+              isConfessional: (scene as { isConfessional?: boolean }).isConfessional,
+              cameraStyle: (scene as { cameraStyle?: string }).cameraStyle,
+              setting: scene.setting,
+              action: scene.action,
+            },
+            clipType
+          );
+          try {
+            const clipUrl = await Promise.race([
+              hailuoImageToVideo(avatarForScenes, prompt, { duration: 5, resolution: "720P" }),
+              new Promise<string>((_, rej) =>
+                setTimeout(() => rej(new Error("FAL timeout after 3 minutes")), FAL_TIMEOUT_MS)
+              ),
+            ]);
+            urls.push(clipUrl);
+            console.log(`[animate] Scene ${i + 1} ${clipType}:`, clipUrl?.slice(0, 50) + "...");
+          } catch (err) {
+            console.error(`[animate] Scene ${i + 1} ${clipType} failed:`, err);
+            urls.push(null);
+          }
         }
       }
       return urls;
     });
 
     const audioBase64ByScene = await step.run("generate-audio", async () => {
+      const scenesForV1 = script.scenes.slice(0, sceneCount);
+      const hasDialogueLines = scenesForV1.some((s) => {
+        const dl = (s as { dialogueLines?: unknown[] }).dialogueLines;
+        return Array.isArray(dl) && dl.length > 0;
+      });
+
+      if (hasDialogueLines) {
+        const MULTI_SPEAKER_GAP_SEC = 0.2;
+        const sceneBuffers: Buffer[] = [];
+        for (const scene of scenesForV1) {
+          const dialogueLines =
+            (scene as {
+              dialogueLines?: { speaker: string; voiceArchetype: string; line: string; clipIndex?: number }[];
+            }).dialogueLines ?? [];
+          if (dialogueLines.length === 0) {
+            sceneBuffers.push(Buffer.alloc(0));
+            continue;
+          }
+          const lineBuffers: Buffer[] = [];
+          for (const dl of dialogueLines) {
+            const buf = await generateLineAudioFromArchetype(
+              dl.line,
+              dl.voiceArchetype ?? "narrator"
+            );
+            if (buf.length) lineBuffers.push(buf);
+          }
+          if (lineBuffers.length === 0) {
+            sceneBuffers.push(Buffer.alloc(0));
+          } else if (lineBuffers.length === 1) {
+            sceneBuffers.push(lineBuffers[0]);
+          } else {
+            const stitched = await stitchAudioBuffersWithGap(
+              lineBuffers,
+              MULTI_SPEAKER_GAP_SEC
+            );
+            sceneBuffers.push(stitched);
+          }
+        }
+        const totalBytes = sceneBuffers.reduce((s, b) => s + b.length, 0);
+        const approxDurationSec = Math.round(totalBytes / 2000);
+        console.log("[audio] dialogueLines path: scene buffers:", sceneBuffers.length, "total bytes:", totalBytes, "~" + approxDurationSec + "s");
+        return sceneBuffers.map((buf) => Buffer.from(buf).toString("base64"));
+      }
+
+      const styleSources = householdPayload.humorStyles?.length
+        ? householdPayload.humorStyles
+        : (householdPayload.showStyle ?? []);
+      const primaryCategory =
+        getPrimaryComedyCategory(styleSources) ??
+        getPrimaryComedyCategory(["mockumentary"]);
+      const narratorVoiceSettings =
+        getNarratorVoiceSettingsFromStyleId(styleId);
+      const scenesForAudio = scenesForV1.map((scene) => {
+        if (scene.dialogue?.length) {
+          return {
+            dialogue: scene.dialogue.map((d) => ({
+              character: d.character,
+              line: d.line,
+              isThoughtBubble: d.isThoughtBubble ?? false,
+              speakerRole: (d.speakerRole ??
+                (scene as { speakerRole?: SpeakerRole }).speakerRole ??
+                "narrator") as SpeakerRole,
+              voiceArchetype: (d as { voiceArchetype?: string }).voiceArchetype,
+            })),
+          };
+        }
+        const line = (scene.narratorLine ?? scene.action ?? "").trim();
+        const speakerRole =
+          (scene as { speakerRole?: string }).speakerRole ?? "narrator";
+        return {
+          dialogue: line
+            ? [
+                {
+                  character: "Narrator",
+                  line,
+                  isThoughtBubble: false,
+                  speakerRole: (speakerRole as SpeakerRole) || "narrator",
+                },
+              ]
+            : [],
+        };
+      });
+      const mainDogArchetype =
+        typeof (primaryDog as { voiceArchetype?: string | null })
+          .voiceArchetype === "string"
+          ? (primaryDog as { voiceArchetype: string }).voiceArchetype
+          : undefined;
       const sceneAudioBuffers = await generateSceneAudioTracks(
-        script.scenes,
+        scenesForAudio,
         characterVoiceMap,
-        THOUGHT_BUBBLE_VOICE_ID
+        THOUGHT_BUBBLE_VOICE_ID,
+        narratorVoiceSettings,
+        mainDogArchetype ? { mainDogArchetype } : undefined
       );
       return sceneAudioBuffers.map((buf) => Buffer.from(buf).toString("base64"));
     });
@@ -439,26 +768,39 @@ export const generateEpisodeFunction = inngest.createFunction(
       const sceneAudioBuffers: Buffer[] = audioBase64ByScene.map((b64) =>
         Buffer.from(b64, "base64")
       );
-      const validPairs = sceneClipUrls
-        .map((clipUrl, i) => ({ clipUrl, audio: sceneAudioBuffers[i] }))
-        .filter((p): p is { clipUrl: string; audio: Buffer } => p.clipUrl != null);
-      const clipsForAssembly = validPairs.map((p) => p.clipUrl);
-      const audioForAssembly = validPairs.map((p) => p.audio);
-      const plan = householdPayload.plan ?? "free";
-      const applyWatermark = plan !== "pro" && plan !== "family";
-      const castNames = [
-        ...householdPayload.dogs.map((d) => d.name),
-        ...householdPayload.castMembers.map((c) => c.name),
+      const validClipUrls = sceneClipUrls.filter((u): u is string => u != null);
+      const castNames: string[] = [
+        ...householdPayload.dogs.map((d) => String(d.name)),
+        ...householdPayload.castMembers.map((c) => String(c.name)),
       ];
-      const { verticalBuffer, landscapeBuffer, thumbnailBuffer } =
-        await assembleFullEpisode({
+      let verticalBuffer: Buffer;
+      let landscapeBuffer: Buffer;
+      let thumbnailBuffer: Buffer;
+      const expectedClips = sceneCount * 2;
+      if (validClipUrls.length >= expectedClips && sceneAudioBuffers.length >= sceneCount) {
+        const result = await assembleV1Episode({
           showTitle: householdPayload.showTitle,
-          episodeTitle: script.episodeTitle,
+          episodeTitle: String(script.episodeTitle ?? ""),
+          clipUrls: validClipUrls.slice(0, expectedClips),
+          sceneAudioBuffers: sceneAudioBuffers.slice(0, sceneCount),
+        });
+        verticalBuffer = result.verticalBuffer;
+        landscapeBuffer = result.landscapeBuffer;
+        thumbnailBuffer = result.thumbnailBuffer;
+      } else {
+        const clipsForAssembly = validClipUrls;
+        const audioForAssembly = sceneAudioBuffers.slice(0, validClipUrls.length);
+        const result = await assembleFullEpisode({
+          showTitle: householdPayload.showTitle,
+          episodeTitle: String(script.episodeTitle ?? ""),
           castNames,
           sceneClipUrls: clipsForAssembly,
-          sceneAudioBuffers: audioForAssembly,
-          applyWatermark,
+          sceneAudioBuffers: audioForAssembly.length ? audioForAssembly : sceneAudioBuffers.map((_, i) => (validClipUrls[i] ? sceneAudioBuffers[Math.min(i, sceneAudioBuffers.length - 1)] : Buffer.alloc(0))).filter((b) => b.length > 0),
         });
+        verticalBuffer = result.verticalBuffer;
+        landscapeBuffer = result.landscapeBuffer;
+        thumbnailBuffer = result.thumbnailBuffer;
+      }
       const bucket = getSupabaseStorageBucket();
       const uid = randomUUID();
       const basePath = `${householdPayload.userId}/episodes/${householdPayload.episodeId}-${uid}`;
@@ -502,13 +844,25 @@ export const generateEpisodeFunction = inngest.createFunction(
         },
       });
       if (householdPayload.userId) {
+        const episodeScript = script as DirectorScriptJson;
         await notifyEpisodeReady({
-          episodeTitle: script.title,
+          episodeTitle: episodeScript.episodeTitle,
           episodeId: householdPayload.episodeId,
           thumbnailUrl: urls.thumbnailUrl ?? null,
           userId: householdPayload.userId,
         });
       }
+      console.log("[cost] Episode complete:", {
+        episodeId: householdPayload.episodeId,
+        clips: 8,
+        estimatedCost: "$1.38",
+        breakdown: {
+          video: "8 × $0.15 = $1.20",
+          audio: "$0.10",
+          script: "$0.03",
+          avatar: "$0.05 amortized",
+        },
+      });
     });
 
     return {
@@ -559,11 +913,12 @@ export const generateAvatarsFunction = inngest.createFunction(
 
     for (const dog of household.dogs) {
       try {
-        const photoUrls = dogPhotoUrls ?? [dog.photoUrl];
-        const url = await generateDogAvatarFal(photoUrls, dog.name);
+        const dogPhotos = (dog as unknown as { photoUrls?: string[] }).photoUrls;
+        const photoUrls = dogPhotoUrls ?? (Array.isArray(dogPhotos) && dogPhotos.length > 0 ? dogPhotos : [dog.photoUrl]);
+        const { primary, alt } = await generateDogAvatarFal(photoUrls, dog.name, dog.breed);
         await prisma.dog.update({
           where: { id: dog.id },
-          data: { animatedAvatar: url },
+          data: { animatedAvatar: primary, animatedAvatarAlt: alt } as Prisma.DogUpdateInput,
         });
         results.dogs++;
       } catch (e) {
@@ -573,7 +928,12 @@ export const generateAvatarsFunction = inngest.createFunction(
 
     for (const member of household.castMembers) {
       try {
-        const url = await generateHumanAvatar(member.photoUrl);
+        const photoUrl = (member as { photoUrls?: string[] }).photoUrls?.[0] ?? member.photoUrl;
+        if (!photoUrl) {
+          results.errors.push(`Cast ${member.name}: No photo`);
+          continue;
+        }
+        const url = await generateHumanAvatar(photoUrl);
         await prisma.castMember.update({
           where: { id: member.id },
           data: { animatedAvatar: url },
@@ -588,12 +948,130 @@ export const generateAvatarsFunction = inngest.createFunction(
   }
 );
 
+/** Generate Pixar-style avatar for a single cast member. Triggered when cast photos are saved. */
+export const generateCastAvatarFunction = inngest.createFunction(
+  {
+    id: "generate-cast-avatar",
+    retries: 1,
+    concurrency: { limit: 5 },
+  },
+  { event: "cast/avatar-generate" },
+  async ({ event, step }) => {
+    const { castMemberId, photoUrls, name, role, householdId } = event.data as {
+      castMemberId: string;
+      photoUrls: string[];
+      name: string;
+      role: string;
+      householdId: string;
+    };
+    if (!photoUrls?.length) {
+      await prisma.castMember.update({
+        where: { id: castMemberId },
+        data: { avatarStatus: "failed" } as Prisma.CastMemberUpdateInput,
+      });
+      return { success: false, reason: "No photo URLs" };
+    }
+
+    await step.run("set-generating", async () => {
+      await prisma.castMember.update({
+        where: { id: castMemberId },
+        data: { avatarStatus: "generating" } as Prisma.CastMemberUpdateInput,
+      });
+      return {};
+    });
+
+    const isPet = role === "pet_2" || role === "pet_3";
+    let avatarUrl: string;
+    try {
+      avatarUrl = await step.run("generate-avatar", async () => {
+        if (isPet) {
+          const res = await generateDogAvatarFal(photoUrls, name);
+          return res.primary;
+        }
+        return await generateHumanAvatarFal(photoUrls);
+      });
+    } catch (err) {
+      await prisma.castMember.update({
+        where: { id: castMemberId },
+        data: { avatarStatus: "failed" } as Prisma.CastMemberUpdateInput,
+      });
+      throw err;
+    }
+
+    await step.run("save-avatar", async () => {
+      await prisma.castMember.update({
+        where: { id: castMemberId },
+        data: { animatedAvatar: avatarUrl, avatarStatus: "ready" } as Prisma.CastMemberUpdateInput,
+      });
+      return {};
+    });
+
+    return { success: true, castMemberId, avatarUrl };
+  }
+);
+
 function startOfWeek(d: Date): Date {
   const x = new Date(d);
   x.setUTCDate(x.getUTCDate() - x.getUTCDay());
   x.setUTCHours(0, 0, 0, 0);
   return x;
 }
+
+/** Weekly cron: every Monday 9am UTC. Only households with active subscription. */
+export const weeklyEpisodeCron = inngest.createFunction(
+  { id: "weekly-episode-cron" },
+  { cron: "0 9 * * 1" },
+  async ({ step }) => {
+    const activeHouseholds = await step.run("fetch-active-households", async () => {
+      return prisma.household.findMany({
+        where: {
+          user: {
+            subscription: { status: "active" },
+          },
+        },
+        include: { dogs: true },
+      });
+    });
+    const results: { householdId: string; episodeId?: string; error?: string }[] = [];
+    for (const household of activeHouseholds) {
+      if (household.dogs.length === 0) continue;
+      const episodeCount = await prisma.episode.count({
+        where: { householdId: household.id },
+      });
+      const nextNum = episodeCount + 1;
+      try {
+        const newEpisode = await prisma.episode.create({
+          data: {
+            householdId: household.id,
+            episodeNum: nextNum,
+            season: 1,
+            title: `Episode ${nextNum}`,
+            synopsis: "",
+            script: {},
+            status: "pending",
+          },
+        });
+        await inngest.send({
+          name: "episode/generate",
+          data: {
+            episodeId: newEpisode.id,
+            episodeNum: newEpisode.episodeNum,
+            householdId: household.id,
+            season: newEpisode.season,
+          },
+        });
+        results.push({ householdId: household.id, episodeId: newEpisode.id });
+      } catch (e) {
+        results.push({
+          householdId: household.id,
+          error: e instanceof Error ? e.message : "Failed",
+        });
+      }
+    }
+    console.log("[cron] Triggered", results.length, "episodes");
+    return { triggered: results.length, results };
+  }
+);
 
 /** Daily cron: midnight UTC for V1. (3:00 AM user-local would require per-user scheduling.) */
 export const dailyEpisodeCron = inngest.createFunction(

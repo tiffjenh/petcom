@@ -99,7 +99,7 @@ export function CastGrid({ dogs, castMembers }: Props) {
             <div className="flex items-start justify-between">
               <div className="mb-2 flex h-24 w-24 overflow-hidden rounded-lg bg-muted">
                 <img
-                  src={dog.animatedAvatar ?? dog.photoUrl}
+                  src={dog.animatedAvatar ?? dog.photoUrls?.[0] ?? dog.photoUrl}
                   alt={dog.name}
                   className="h-full w-full object-cover"
                 />
@@ -158,7 +158,7 @@ export function CastGrid({ dogs, castMembers }: Props) {
             <div className="flex items-start justify-between">
               <div className="mb-2 flex h-24 w-24 overflow-hidden rounded-lg bg-muted">
                 <img
-                  src={member.animatedAvatar ?? member.photoUrl}
+                  src={member.animatedAvatar ?? member.photoUrls?.[0] ?? member.photoUrl ?? ""}
                   alt={member.name}
                   className="h-full w-full object-cover"
                 />
